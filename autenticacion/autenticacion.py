@@ -183,39 +183,93 @@ class State(rx.State):
 def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component:
     return rx.card(
         rx.vstack(
-            rx.heading(title, size="2", color="black"),
-            rx.input(placeholder="Correo electrónico", type="email", value=State.correo, on_change=State.set_correo, bg="white", border_color="gray.300", width="100%", border_radius="md"),
-            rx.input(placeholder="Contraseña", type="password", value=State.contraseña, on_change=State.set_contraseña, bg="white", border_color="gray.300", width="100%", border_radius="md"),
-            
-            rx.cond(
-                show_confirm,
-                rx.input(placeholder="Confirmar contraseña", type="password", value=State.confirmar_contraseña, on_change=State.set_confirmar_contraseña, bg="white", border_color="gray.300", width="100%", border_radius="md")
+            rx.heading(
+                title, 
+                size="7", 
+                # Dinámico: Negro en luz, blanco en sombra
+                color=rx.color_mode_cond(light="black", dark="white"), 
+                margin_bottom="1em"
             ),
             
-            rx.text(State.error_de_registro, color="red.500", font_size="sm"),
-            rx.text(State.error_de_contraseña, color="red.500", font_size="sm"),
-            rx.text(State.succes, color="green.500", font_size="sm"),
-            rx.text(State.succes2, color="green.500", font_size="sm"),
+            # Input de Correo
+            rx.input(
+                placeholder="Correo electrónico",
+                type="email",
+                value=State.correo,
+                on_change=State.set_correo,
+                # Ajuste de fondo para que no brille en modo oscuro
+                bg=rx.color_mode_cond(light="white", dark="#2d3748"),
+                color=rx.color_mode_cond(light="black", dark="white"),
+                border="1px solid #718096",
+                _placeholder={
+                    "color": rx.color_mode_cond(light="#718096", dark="#A0AEC0"),
+                    "opacity": "1"
+                },
+                width="100%",
+                border_radius="md",
+            ),
+
+            # Input de Contraseña
+            rx.input(
+                placeholder="Contraseña", 
+                type="password", 
+                value=State.contraseña, 
+                on_change=State.set_contraseña, 
+                bg=rx.color_mode_cond(light="white", dark="#2d3748"),
+                color=rx.color_mode_cond(light="black", dark="white"),
+                border="1px solid #718096",
+                _placeholder={"color": rx.color_mode_cond(light="#718096", dark="#A0AEC0")},
+                width="100%", 
+                border_radius="md"
+            ),
             
-            rx.button(title, on_click=on_submit, width="100%", color_scheme="blue", box_shadow="md", size="4"),
+            # Confirmar Contraseña (Condicional)
+            rx.cond(
+                show_confirm,
+                rx.input(
+                    placeholder="Confirmar contraseña", 
+                    type="password", 
+                    value=State.confirmar_contraseña, 
+                    on_change=State.set_confirmar_contraseña, 
+                    bg=rx.color_mode_cond(light="white", dark="#2d3748"),
+                    color=rx.color_mode_cond(light="black", dark="white"),
+                    border="1px solid #718096",
+                    _placeholder={"color": rx.color_mode_cond(light="#718096", dark="#A0AEC0")},
+                    width="100%", 
+                    border_radius="md"
+                )
+            ),
+            
+            # Mensajes de estado con colores legibles
+            rx.text(State.error_de_registro, color="red.500", font_size="sm", font_weight="bold"),
+            rx.text(State.succes, color="green.500", font_size="sm", font_weight="bold"),
+            
+            rx.button(
+                title, 
+                on_click=on_submit, 
+                width="100%", 
+                color_scheme="blue", 
+                size="4",
+                margin_top="1em"
+            ),
             spacing="4",
             align_items="center",
         ),
         width="100%",
         max_width="450px",
-        padding="32px",
-        box_shadow="2xl",
+        padding="40px",
+        box_shadow="0px 10px 25px rgba(0,0,0,0.2)",
         border_radius="xl",
-        bg="white"
+        # Fondo de la tarjeta adaptativo para el Sprint 2
+        bg=rx.color_mode_cond(light="#f5f5f5", dark="#1a202c")
     )
-    # Welcome Page (Index)
 
 
 def navbar() -> rx.Component:
     return rx.hstack(
-        rx.link("Inicio", href="/", font_weight="bold", color="black", text_decoration="none", _hover={"color":"gray.100"}),
-        rx.link("Registro de Ciudadano", href="/registro", font_weight="bold", color="black", text_decoration="none", _hover={"color":"gray.100"}),
-        rx.link("Iniciar Sesión", href="/login", font_weight="bold", color="black", text_decoration="none", _hover={"color":"gray.100"}),
+        rx.link("Inicio", href="/", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
+        rx.link("Registro de Ciudadano", href="/registro", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
+        rx.link("Iniciar Sesión", href="/login", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
         spacing="6",
         padding="16px",
         width="100%",
@@ -234,19 +288,44 @@ def index() -> rx.Component:
         navbar(), # Agregamos el menú
         rx.center(
             rx.vstack(
-                rx.heading("Sistema de Gestión de PQRS", size="9", color="black"),
-                rx.text("Bienvenido al sistema de Peticiones, Quejas, Reclamos y Sugerencias de la empresa pública. Regístrate para enviar tus solicitudes.", size="5", color="black", text_align="center", max_width="780px"),
-                rx.link(rx.button("Comenzar", color_scheme="blue", size="4"), href="/registro", mt="6"),
+                # Título con el estilo que pediste
+                rx.heading(
+                    "Sistema de Gestión de PQRS", 
+                    size="9", 
+                    style={
+                        "color": rx.color_mode_cond(light="black", dark="white"),
+                        "transition": "color 0.5s" 
+                    }
+                ),
+                # Texto descriptivo también ajustado para que sea legible
+                rx.text(
+                    "Bienvenido al sistema de Peticiones, Quejas, Reclamos y Sugerencias de la empresa pública. Regístrate para enviar tus solicitudes.", 
+                    size="5", 
+                    style={
+                        "color": rx.color_mode_cond(light="black", dark="#ced4da"),
+                        "transition": "color 0.5s"
+                    },
+                    text_align="center", 
+                    max_width="780px"
+                ),
+                rx.link(
+                    rx.button("Comenzar", color_scheme="blue", size="4"), 
+                    href="/registro", 
+                    mt="6"
+                ),
                 spacing="5",
                 justify="center",
                 align_items="center"
             ),
             min_height="84vh",
             width="100%",
-            bg_gradient="linear(to-r, blue.50, teal.50)"
+            # El gradiente ahora se adapta al modo claro/oscuro
+            background=rx.color_mode_cond(
+                light="linear-gradient(to-r, #eff6ff, #f0fdfa)", # blue.50 y teal.50
+                dark="none" # En modo oscuro deja que el tema maneje el fondo negro
+            )
         )
     )
-
 
 def registro_page() -> rx.Component:
     return rx.container(
@@ -254,7 +333,7 @@ def registro_page() -> rx.Component:
         rx.center(
             # Llamamos a auth_card con la función de signup y pidiendo confirmación
             auth_card("Registrarme como Ciudadano", State.signup, show_confirm=True),
-            min_height="85vh"
+            min_height="8vh"
         )
     )
 
