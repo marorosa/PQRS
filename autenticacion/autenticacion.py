@@ -115,11 +115,36 @@ class State(rx.State):
     contraseña: str = ""
     confirmar_contraseña: str = ""
     correo: str = ""
+    # Campos adicionales para registro extendido
+    tipo_identificacion: str = ""
+    numero_identificacion: str = ""
+    nombres: str = ""
+    apellidos: str = ""
+    genero: str = ""
+    direccion: str = ""
+    telefono: str = ""
+    departamento: str = ""
+    ciudad: str = ""
+    # Estados de validación UX
+    correo_validado: bool = False
+    numero_identificacion_valid: bool = False
+    nombres_valid: bool = False
+    apellidos_valid: bool = False
+    telefono_valid: bool = False
+    departamento_valid: bool = False
+    ciudad_valid: bool = False
+    # Habeas data / autorizaciones
+    acepta_notificaciones: bool = False
+    acepta_politica_datos: bool = False
+    # Para el formulario de solicitudes
+    acepta_politica_solicitud: bool = False
     tipo_solicitud: str = ""
     asunto: str = ""
     descripcion: str = ""
     ubicacion: str = ""
     documento: str = ""
+    documento_nombre: str = ""
+    descripcion_len: int = 0
     solicitudes: List[Dict] = []
     editar_solicitud_id: int = 0
     solicitud_mensaje: str = ""
@@ -155,9 +180,103 @@ class State(rx.State):
             self.error_de_registro = "Las contraseñas no coinciden."
             return False
         return True
+    def validar_campo_simple(self, campo: str) -> bool:
+        """Validaciones simples para mostrar iconos de confirmación.
+        Retorna True si el campo parece correcto."""
+        val = getattr(self, campo, "")
+        ok = False
+        if campo == "telefono":
+            ok = isinstance(val, str) and len(val) >= 7
+        elif campo == "numero_identificacion":
+            ok = isinstance(val, str) and len(val) >= 6
+        elif campo == "correo":
+            ok = validar_correo(val)
+        else:
+            ok = bool(val and str(val).strip())
+        # set dedicated flags for reactivity
+        if campo == "telefono":
+            self.telefono_valid = ok
+        elif campo == "numero_identificacion":
+            self.numero_identificacion_valid = ok
+        elif campo == "nombres":
+            self.nombres_valid = ok
+        elif campo == "apellidos":
+            self.apellidos_valid = ok
+        elif campo == "departamento":
+            self.departamento_valid = ok
+        elif campo == "ciudad":
+            self.ciudad_valid = ok
+        return ok
+        return ok
+
+    def validar_correo_accion(self):
+        """Acción invocada por el botón 'Validar' junto al correo."""
+        self.correo_validado = validar_correo(self.correo)
+        if not self.correo_validado:
+            self.error_de_registro = "Correo inválido."
+        else:
+            self.error_de_registro = ""
+        return
+
+    # Setters that also validate so we can show inline icons
+    def set_and_validate_nombres(self, val: str):
+        self.nombres = val
+        self.validar_campo_simple("nombres")
+
+    def set_and_validate_apellidos(self, val: str):
+        self.apellidos = val
+        self.validar_campo_simple("apellidos")
+
+    def set_and_validate_numero_identificacion(self, val: str):
+        self.numero_identificacion = val
+        self.validar_campo_simple("numero_identificacion")
+
+    def set_and_validate_telefono(self, val: str):
+        self.telefono = val
+        self.validar_campo_simple("telefono")
+
+    def set_and_validate_departamento(self, val: str):
+        self.departamento = val
+        self.validar_campo_simple("departamento")
+
+    def set_and_validate_ciudad(self, val: str):
+        self.ciudad = val
+        self.validar_campo_simple("ciudad")
+
+    def set_descripcion(self, val: str):
+        # Guardar descripción y longitud para el contador de caracteres
+        self.descripcion = val if val is not None else ""
+        # Limitar a 1000 caracteres en la UI
+        if len(self.descripcion) > 1000:
+            self.descripcion = self.descripcion[:1000]
+        self.descripcion_len = len(self.descripcion)
+
+    def set_documento(self, val):
+        # Valida y guarda nombre/valor del documento enviado desde el input file
+        # Valores posibles: dict con 'name' y 'content', o string (ruta/data URL)
+        self.documento = val
+        try:
+            if isinstance(val, dict) and "name" in val:
+                self.documento_nombre = val.get("name", "")
+            elif isinstance(val, str):
+                # puede ser data URL o ruta; mostrar solo la parte final
+                self.documento_nombre = os.path.basename(val)
+            else:
+                self.documento_nombre = ""
+        except Exception:
+            self.documento_nombre = ""
     def signup(self):
         self.borrar_mensajes_de_estado()
         if not self.validacion_de_entradas():
+            return
+        # Validaciones adicionales para registro extendido
+        required_fields = ["nombres", "apellidos", "tipo_identificacion", "numero_identificacion"]
+        for f in required_fields:
+            if not getattr(self, f, ""):
+                self.error_de_registro = "Completa los campos obligatorios de información personal."
+                return
+        if not self.acepta_politica_datos or not self.acepta_notificaciones:
+            self.error_de_registro = "Debes aceptar la política de datos y recibir notificaciones para registrarte."
             return
         with rx.session() as session:
             existing_user = session.exec(select(Usuario).where(Usuario.email == self.correo)).first()
@@ -165,7 +284,22 @@ class State(rx.State):
                 self.error_de_registro = "El correo ya está registrado."
                 return
             hashed = tiene_password(self.contraseña)
-            nuevo_usuario = Usuario(email=self.correo, Contraseña=hashed, rol="ciudadano", is_active=True, Fecha_de_creacion=datetime.now())
+            nuevo_usuario = Usuario(
+                email=self.correo,
+                Contraseña=hashed,
+                rol="ciudadano",
+                is_active=True,
+                Fecha_de_creacion=datetime.now(),
+                tipo_identificacion=self.tipo_identificacion,
+                numero_identificacion=self.numero_identificacion,
+                nombres=self.nombres,
+                apellidos=self.apellidos,
+                genero=self.genero,
+                direccion=self.direccion,
+                telefono=self.telefono,
+                departamento=self.departamento,
+                ciudad=self.ciudad,
+            )
             session.add(nuevo_usuario)
             session.commit()
             print(f"Usuario registrado: {self.correo}")
@@ -272,6 +406,10 @@ class State(rx.State):
         if not self.tipo_solicitud or not self.asunto or not self.descripcion:
             self.solicitud_mensaje = "Completa los campos obligatorios antes de enviar."
             return
+        # Verificar aceptación de política de tratamiento de datos
+        if not self.acepta_politica_solicitud:
+            self.solicitud_mensaje = "Debes aceptar la Política de Tratamiento de Datos Personales antes de enviar."
+            return
         if self.editar_solicitud_id:
             for solicitud in self.solicitudes:
                 if solicitud["id"] == self.editar_solicitud_id:
@@ -355,6 +493,137 @@ class State(rx.State):
 
 
 def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component:
+    # Si show_confirm es True, renderizamos el formulario extendido para registro
+    if show_confirm:
+        return rx.card(
+            rx.form(
+                rx.vstack(
+                    rx.heading(title, size="7", color="black", margin_bottom="1em"),
+                    # Grid de 2 columnas para campos personales
+                    rx.grid(
+                        # Responsive grid: 3 columnas en pantallas anchas
+                        rx.vstack(rx.text("Tipo de Identificación", font_weight="semibold"), rx.select(["Cédula", "Pasaporte", "Tarjeta de Identidad"], placeholder="Selecciona", value=State.tipo_identificacion, on_change=State.set_tipo_identificacion, bg="white", border="1px solid #cbd5e1", border_radius="md")),
+                        rx.vstack(rx.text([rx.text("Número de Identificación "), rx.text("*", color="orange.500")]), rx.hstack(rx.input(placeholder="Número de Identificación", value=State.numero_identificacion, on_change=State.set_and_validate_numero_identificacion, bg="white", border="1px solid #cbd5e1", border_radius="md"), rx.cond(State.numero_identificacion_valid, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
+                        rx.vstack(rx.text([rx.text("Nombres "), rx.text("*", color="orange.500")]), rx.hstack(rx.input(placeholder="Nombres", value=State.nombres, on_change=State.set_and_validate_nombres, bg="white", border="1px solid #cbd5e1", border_radius="md"), rx.cond(State.nombres_valid, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
+                        rx.vstack(rx.text([rx.text("Apellidos "), rx.text("*", color="orange.500")]), rx.hstack(rx.input(placeholder="Apellidos", value=State.apellidos, on_change=State.set_and_validate_apellidos, bg="white", border="1px solid #cbd5e1", border_radius="md"), rx.cond(State.apellidos_valid, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
+                        rx.vstack(rx.text("Género"), rx.select(["Femenino", "Masculino", "Otro", "Prefiero no decirlo"], placeholder="Selecciona", value=State.genero, on_change=State.set_genero, bg="white", border="1px solid #cbd5e1", border_radius="md")),
+                        rx.vstack(rx.text("Teléfono"), rx.hstack(rx.input(placeholder="Teléfono", value=State.telefono, on_change=State.set_and_validate_telefono, bg="white", border="1px solid #cbd5e1", border_radius="md"), rx.cond(State.telefono_valid, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
+                        rx.vstack(rx.text("Departamento"), rx.hstack(rx.input(placeholder="Departamento", value=State.departamento, on_change=State.set_and_validate_departamento, bg="white", border="1px solid #cbd5e1", border_radius="md"), rx.cond(State.departamento_valid, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
+                        rx.vstack(rx.text("Ciudad"), rx.hstack(rx.input(placeholder="Ciudad", value=State.ciudad, on_change=State.set_and_validate_ciudad, bg="white", border="1px solid #cbd5e1", border_radius="md"), rx.cond(State.ciudad_valid, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
+                        rx.box(
+                            rx.vstack(
+                                rx.text([rx.text("Dirección "), rx.text("*", color="orange.500")]),
+                                rx.input(
+                                    placeholder="Dirección",
+                                    value=State.direccion,
+                                    on_change=State.set_direccion,
+                                    bg="white",
+                                    border="1px solid #cbd5e1",
+                                    border_radius="md",
+                                ),
+                            ),
+                            grid_column="1 / -1",
+                        ),
+                        rx.box(
+                            rx.hstack(
+                                rx.input(
+                                    placeholder="Correo electrónico",
+                                    type="email",
+                                    value=State.correo,
+                                    on_change=State.set_correo,
+                                    bg="white",
+                                    border="1px solid #cbd5e1",
+                                    border_radius="md",
+                                ),
+                                rx.button("Validar", on_click=State.validar_correo_accion, color_scheme="blue", size="2", ml="2"),
+                                rx.cond(State.correo_validado, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")),
+                            ),
+                            grid_column="1 / -1",
+                        ),
+                        rx.box(
+                            rx.vstack(
+                                rx.text([rx.text("Contraseña "), rx.text("*", color="orange.500")]),
+                                rx.hstack(
+                                    rx.cond(
+                                        State.show_password,
+                                        rx.input(
+                                            placeholder="Contraseña",
+                                            type="text",
+                                            value=State.contraseña,
+                                            on_change=State.set_contraseña,
+                                            bg="white",
+                                            border="1px solid #cbd5e1",
+                                            border_radius="md",
+                                        ),
+                                        rx.input(
+                                            placeholder="Contraseña",
+                                            type="password",
+                                            value=State.contraseña,
+                                            on_change=State.set_contraseña,
+                                            bg="white",
+                                            border="1px solid #cbd5e1",
+                                            border_radius="md",
+                                        ),
+                                    ),
+                                    rx.button(
+                                        rx.cond(State.show_password, "🙈", "👁"),
+                                        on_click=State.toggle_show_password,
+                                        variant="ghost",
+                                        size="2",
+                                        ml="2",
+                                    ),
+                                ),
+                            ),
+                            grid_column="1 / -1",
+                        ),
+                        rx.box(
+                            rx.cond(
+                                show_confirm,
+                                rx.vstack(
+                                    rx.text([rx.text("Confirmar Contraseña "), rx.text("*", color="orange.500")]),
+                                    rx.input(
+                                        placeholder="Confirmar Contraseña",
+                                        type="password",
+                                        value=State.confirmar_contraseña,
+                                        on_change=State.set_confirmar_contraseña,
+                                        bg="white",
+                                        border="1px solid #cbd5e1",
+                                        border_radius="md",
+                                    ),
+                                ),
+                            ),
+                            grid_column="1 / -1",
+                        ),
+                        template_columns="repeat(3, 1fr)",
+                        gap="4",
+                    ),
+
+                    # Sección legal y checkboxes
+                    rx.vstack(
+                        rx.checkbox("Acepto recibir notificaciones por correo", is_checked=State.acepta_notificaciones, on_change=State.set_acepta_notificaciones),
+                        rx.checkbox(rx.link("He leído y acepto la Política de Protección de Datos", href="/politica-privacidad", color="blue"), is_checked=State.acepta_politica_datos, on_change=State.set_acepta_politica_datos),
+                        spacing="3",
+                        padding_top="4"
+                    ),
+
+                    rx.text(State.error_de_registro, color="red.500", font_size="sm", font_weight="bold"),
+                    rx.text(State.succes, color="green.500", font_size="sm", font_weight="bold"),
+
+                    rx.hstack(rx.button(title, type="submit", color_scheme="blue", size="4", width="220px"), rx.link("¿Ya tienes cuenta? Inicia sesión", href="/login", margin_left="4"), spacing="4", justify="start"),
+
+                    spacing="4",
+                    align_items="stretch"
+                ),
+                on_submit=on_submit
+            ),
+            p="8",
+            max_width="1100px",
+            box_shadow="2xl",
+            border_radius="2xl",
+            bg="#ffffff"
+        )
+
+    # Si no es registro extendido, renderizamos la forma simple (login)
     return rx.card(
         rx.vstack(
             rx.heading(
@@ -459,15 +728,15 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
                 size="4",
                 margin_top="1em"
             ),
+            
+            rx.link("¿Ya tienes cuenta? Inicia sesión", href="/login", margin_top="0.5em"),
             spacing="4",
             align_items="center",
         ),
-        width="100%",
+        p="8",
         max_width="450px",
-        padding="40px",
-        box_shadow="0px 10px 25px rgba(0,0,0,0.2)",
-        border_radius="xl",
-        # Fondo de la tarjeta adaptativo para el Sprint 2
+        box_shadow="2xl",
+        border_radius="2xl",
         bg="#f5f5f5"
     )
 
@@ -486,8 +755,9 @@ def navbar() -> rx.Component:
             padding="12px",
             width="100%",
             justify="center",
-            bg="blue.600",
+            bg="#ffffff",
             box_shadow="md",
+            border_bottom="1px solid #e6eef8",
             position="sticky",
             top="0",
             z_index="sticky"
@@ -498,102 +768,113 @@ def navbar() -> rx.Component:
 def utility_bar() -> rx.Component:
     """Barra superior delgada con logo GOV.CO, accesibilidad y enlaces de sesión."""
     return rx.hstack(
-        rx.image(src="/assets/govco_logo.svg", alt="GOV.CO", height="28px"),
+        rx.image(src="/govco_logo.svg", alt="GOV.CO", height="28px"),
         rx.spacer(),
         rx.hstack(
-            rx.link("Opciones de Accesibilidad", href="#", font_size="sm", color="gray.700"),
-            rx.text("|"),
-            rx.link("Inicia sesión", href="/login", font_size="sm", color="gray.700"),
+            rx.link("Opciones de Accesibilidad", href="#", font_size="sm", color="white"),
+            rx.text("|", color="white"),
+            rx.link("Inicia sesión", href="/login", font_size="sm", color="white"),
             rx.text(" "),
-            rx.link("Regístrate", href="/registro", font_size="sm", color="gray.700"),
+            rx.link("Regístrate", href="/registro", font_size="sm", color="white"),
             spacing="3",
             align_items="center"
         ),
         padding_x="16px",
         padding_y="6px",
-        bg="#ffffff",
-        border_bottom="1px solid #e6eef8",
+        bg="blue.600",
+        border_bottom="1px solid rgba(0,0,0,0.08)",
         width="100%",
         align_items="center"
     )
 
 
 def index() -> rx.Component:
-    return rx.container(
+    return rx.vstack(
         rx.color_mode.button(position="top-right"),
-        navbar(), # Agregamos el menú
-        # Hero principal usando imagen de assets (fall back a estilo CSS con overlay)
-        rx.box(
-            rx.vstack(
-                rx.heading("Atención PQRS - Enlace 1755", size="7", color="white"),
-                rx.text("Atención PQRS - Enlace 1755", color="white", font_size="sm"),
-                spacing="2",
-                align_items="flex-start"
-            ),
-            width="100%",
-            min_height="600px",
-            style={
-                "backgroundImage": "linear-gradient(rgba(0,0,0,0.35), rgba(0,0,0,0.35)), url('/assets/Gemini_Generated_Image_ouyornouyornouyo.png')",
-                "backgroundSize": "cover",
-                "backgroundPosition": "center",
-                "backgroundRepeat": "no-repeat",
-                "paddingLeft": "2rem",
-                "paddingRight": "2rem",
-                "paddingTop": "3rem",
-                "paddingBottom": "3rem",
-                "color": "white"
-            },
-            text_align="left"
-        ),
 
-        # Contenedor principal del landing con espacio y texto explicativo
-        rx.center(
-            rx.vstack(
+        # Header y banner de ancho completo
+        rx.fragment(
+            navbar(), # Barra superior (ya definida para 100% ancho)
+            # Hero principal usando imagen de assets (full-width banner)
+            rx.box(
+                # inner centered container so text aligns with main content
                 rx.container(
                     rx.vstack(
-                        rx.heading("La Universidad del Valle te da la bienvenida al portal de gestión Enlace 1755", size="5", color="black"),
-                        rx.text(
-                            "Para nosotros es fundamental brindarte una atención transparente, oportuna y adecuada. Antes de registrar tu solicitud, por favor ten en cuenta los siguientes conceptos para clasificarla correctamente:",
-                            color="gray.700",
-                            font_size="md",
-                            text_align="left"
-                        ),
-                        # Lista de definiciones
-                        rx.vstack(
-                            rx.hstack(rx.text("Petición:", font_weight="bold"), rx.text("Es el derecho de solicitar información, documentos o consultar sobre las actuaciones de la entidad.")),
-                            rx.hstack(rx.text("Queja:", font_weight="bold"), rx.text("Manifestación de inconformidad frente a la conducta o actuar irregular de un funcionario.")),
-                            rx.hstack(rx.text("Reclamo:", font_weight="bold"), rx.text("Manifestación por prestación deficiente de un servicio o incumplimiento de una obligación.")),
-                            rx.hstack(rx.text("Sugerencia:", font_weight="bold"), rx.text("Recomendación o idea para mejorar servicios, procesos o atención de la institución.")),
-                            spacing="3",
-                            align_items="flex-start"
-                        ),
-                        spacing="6",
-                        align_items="stretch"
+                        rx.heading("Atención PQRS - Enlace 1755", size="7", color="blue.600", style={"textShadow": "none"}),
+                        rx.text("Atención PQRS - Enlace 1755", color="blue.600", font_size="sm", style={"textShadow": "none"}),
+                        spacing="2",
+                        align_items="flex-start"
                     ),
                     max_width="900px",
-                    padding="6",
-                    bg="white",
-                    border_radius="md",
-                    box_shadow="sm"
+                    padding_x="6",
+                    padding_y="2",
+                    margin_x="auto"
                 ),
+                width="100%",
+                min_height="220px",
+                style={
+                    "backgroundImage": "linear-gradient(rgba(0,0,0,0.15), rgba(0,0,0,0.15)), url('/Gemini_Generated_Image_ouyornouyornouyo.png')",
+                    "backgroundSize": "cover",
+                    "backgroundPosition": "center",
+                    "backgroundRepeat": "no-repeat",
+                    "color": "inherit"
+                },
+                text_align="left"
+            )
+        ),
 
-                # Botones de acción principales
-                rx.hstack(
-                    rx.link(rx.button("Radicar PQRS", color_scheme="blue", size="4", width="220px"), href="/solicitudes"),
+        # Contenido principal centrado y con ancho limitado para legibilidad
+        rx.container(
+            rx.center(
+                rx.vstack(
+                    rx.container(
+                        rx.vstack(
+                            rx.heading("La Universidad del Valle te da la bienvenida al portal de gestión Enlace 1755", size="5", color="black"),
+                            rx.text(
+                                "Para nosotros es fundamental brindarte una atención transparente, oportuna y adecuada. Antes de registrar tu solicitud, por favor ten en cuenta los siguientes conceptos para clasificarla correctamente:",
+                                color="gray.700",
+                                font_size="md",
+                                text_align="left"
+                            ),
+                            # Lista de definiciones
+                            rx.vstack(
+                                rx.hstack(rx.text("Petición:", font_weight="bold"), rx.text("Es el derecho de solicitar información, documentos o consultar sobre las actuaciones de la entidad.")),
+                                rx.hstack(rx.text("Queja:", font_weight="bold"), rx.text("Manifestación de inconformidad frente a la conducta o actuar irregular de un funcionario.")),
+                                rx.hstack(rx.text("Reclamo:", font_weight="bold"), rx.text("Manifestación por prestación deficiente de un servicio o incumplimiento de una obligación.")),
+                                rx.hstack(rx.text("Sugerencia:", font_weight="bold"), rx.text("Recomendación o idea para mejorar servicios, procesos o atención de la institución.")),
+                                spacing="3",
+                                align_items="start"
+                            ),
+                            spacing="6",
+                            align_items="stretch"
+                        ),
+                        max_width="900px",
+                        padding="6",
+                        bg="white",
+                        border_radius="md",
+                        box_shadow="sm"
+                    ),
+
+                    # Botones de acción principales
+                    rx.hstack(
+                        rx.link(rx.button("Radicar PQRS", color_scheme="blue", size="4", width="220px"), href="/solicitudes"),
                         rx.link(rx.button("Consultar Solicitud", color_scheme="gray", size="4", width="220px"), href="/consultar-estado"),
-                    spacing="5",
-                    align_items="center",
-                    justify="center"
-                ),
+                        spacing="5",
+                        align_items="center",
+                        justify="center"
+                    ),
 
-                spacing="8",
-                align_items="center"
+                    spacing="8",
+                    align_items="center"
+                ),
+                min_height="64vh",
+                width="100%",
+                padding_top="10",
+                padding_bottom="10",
+                background="transparent"
             ),
-            min_height="64vh",
-            width="100%",
-            padding_top="10",
-            padding_bottom="10",
-            background="transparent"
+            # container props: keep it visually centered but allow full-width header above
+            padding_x="6"
         ),
 
         footer(),
@@ -642,8 +923,8 @@ def footer() -> rx.Component:
                 rx.text("Sistema gestionado por: Enlace 1755 (Versión 1.0)", font_size="sm")
             ),
 
-            spacing="9",
-            align_items="flex-start"
+                        spacing="9",
+                        align_items="start"
         ),
         width="100%",
         padding_top="24px",
@@ -658,9 +939,9 @@ def brand_footer() -> rx.Component:
     """Franja inferior con logos institucionales (Universidad del Valle y GOV.CO)."""
     return rx.container(
         rx.hstack(
-            rx.image(src="/assets/unival_logo.svg", alt="Universidad del Valle", height="48px"),
+            rx.image(src="/unival_logo.svg", alt="Universidad del Valle", height="48px"),
             rx.spacer(),
-            rx.image(src="/assets/govco_logo.svg", alt="Gobierno de Colombia", height="48px"),
+            rx.image(src="/govco_logo.svg", alt="Gobierno de Colombia", height="48px"),
             spacing="6",
             align_items="center",
             justify="center"
@@ -770,39 +1051,51 @@ def solicitudes_page() -> rx.Component:
                         rx.text("Completa el formulario para radicar tu Petición, Queja, Reclamo o Sugerencia.", color="gray.600"),
                         rx.form(
                             rx.vstack(
-                                rx.select(
-                                    ["Petición", "Queja", "Reclamo", "Sugerencia"],
-                                    placeholder="Selecciona el tipo de solicitud",
-                                    value=State.tipo_solicitud,
-                                    on_change=State.set_tipo_solicitud,
-                                    required=True
+                                # Tipo de solicitud (label + select)
+                                rx.vstack(
+                                    rx.text([rx.text("Tipo de Solicitud ", font_weight="semibold"), rx.text("*", color="orange.500")], align_items="flex-start"),
+                                    rx.select(["Petición", "Queja", "Reclamo", "Sugerencia"], placeholder="Selecciona el tipo de solicitud", value=State.tipo_solicitud, on_change=State.set_tipo_solicitud, required=True),
                                 ),
-                                rx.input(
-                                    placeholder="Asunto",
-                                    value=State.asunto,
-                                    on_change=State.set_asunto,
-                                    required=True
+
+                                # Asunto (label + input)
+                                rx.vstack(
+                                    rx.text([rx.text("Asunto ", font_weight="semibold"), rx.text("*", color="orange.500")]),
+                                    rx.input(placeholder="Asunto", value=State.asunto, on_change=State.set_asunto, required=True, bg="white", border="1px solid #cbd5e1", border_radius="md"),
                                 ),
-                                rx.text_area(
-                                    placeholder="Descripción detallada",
-                                    value=State.descripcion,
-                                    on_change=State.set_descripcion,
-                                    required=True,
-                                    rows="4"
+
+                                # Descripción detallada (label + textarea + contador)
+                                rx.vstack(
+                                    rx.text([rx.text("Descripción detallada ", font_weight="semibold"), rx.text("*", color="orange.500")]),
+                                    rx.text_area(placeholder="Escribe aquí los detalles de tu solicitud...", value=State.descripcion, on_change=State.set_descripcion, required=True, rows="4", max_length=1000, style={"resize": "vertical", "minHeight": "120px", "border": "1px solid #cbd5e1", "borderRadius": "8px", "padding": "8px"}),
+                                    rx.hstack(rx.spacer(), rx.text(State.descripcion_len, font_size="sm", color="gray.600"), rx.text(" / 1000 caracteres", font_size="sm", color="gray.600")),
                                 ),
                                 rx.input(
                                     placeholder="Ubicación (opcional)",
                                     value=State.ubicacion,
                                     on_change=State.set_ubicacion
                                 ),
-                                # Archivo adjunto: se usa un input de tipo file para seleccionar desde el equipo
-                                rx.input(
-                                    placeholder="Documento adjunto (opcional)",
-                                    type="file",
-                                    on_change=State.set_documento,
-                                    accept="*/*"
+
+                                # Archivo adjunto: zona arrastrar y soltar moderna
+                                rx.vstack(
+                                    rx.text("Documento adjunto (opcional)", font_weight="semibold"),
+                                    rx.box(
+                                        rx.hstack(
+                                            rx.image(src="/clip-icon.svg", alt="Adjuntar", height="20px"),
+                                            rx.text("Arrastra y suelta tus archivos aquí o haz clic para explorar", color="gray.600"),
+                                            rx.spacer(),
+                                            rx.text(State.documento_nombre, font_size="sm", color="gray.500")
+                                        ),
+                                        rx.input(type="file", accept="*/*", on_change=State.set_documento, style={"position": "absolute", "inset": "0", "width": "100%", "height": "100%", "opacity": 0, "cursor": "pointer"}),
+                                        position="relative",
+                                        padding="4",
+                                        border="2px dashed #cfe7ff",
+                                        border_radius="8px",
+                                        bg="#f8fbff",
+                                        width="100%",
+                                    )
                                 ),
-                                rx.button("Enviar Solicitud", on_click=State.crear_solicitud, color_scheme="blue", width="100%"),
+                                rx.checkbox(rx.link("He leído y acepto la Política de Tratamiento de Datos Personales", href="/politica-privacidad", color="blue"), is_checked=State.acepta_politica_solicitud, on_change=State.set_acepta_politica_solicitud),
+                                rx.button("Enviar Solicitud", on_click=State.crear_solicitud, color_scheme="blue", width="100%", is_disabled=~State.acepta_politica_solicitud),
                                 rx.cond(
                                     State.solicitud_mensaje,
                                     rx.text(State.solicitud_mensaje, color=rx.cond(State.solicitud_mensaje.contains("éxito"), "green.500", "red.500"))
