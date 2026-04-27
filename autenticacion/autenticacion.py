@@ -392,14 +392,18 @@ class State(rx.State):
     def toggle_show_password(self):
         self.show_password = not self.show_password
 
-    def limpiar_formulario_solicitud(self):
+    def limpiar_formulario_solicitud(self, keep_message: bool = False):
         self.tipo_solicitud = ""
         self.asunto = ""
         self.descripcion = ""
         self.ubicacion = ""
         self.documento = ""
+        self.documento_nombre = ""
+        self.descripcion_len = 0
         self.editar_solicitud_id = 0
-        self.solicitud_mensaje = ""
+        self.acepta_politica_solicitud = False
+        if not keep_message:
+            self.solicitud_mensaje = ""
 
     def crear_solicitud(self):
         self.solicitud_mensaje = ""
@@ -424,6 +428,7 @@ class State(rx.State):
                     self.solicitud_mensaje = "Solicitud actualizada con éxito."
                     break
             self.editar_solicitud_id = 0
+            self.limpiar_formulario_solicitud(keep_message=True)
         else:
             nuevo_id = max([s["id"] for s in self.solicitudes], default=0) + 1
             # Procesar y guardar el archivo adjunto si viene en self.documento
@@ -472,7 +477,7 @@ class State(rx.State):
                 "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
             })
             self.solicitud_mensaje = "Solicitud registrada correctamente."
-        self.limpiar_formulario_solicitud()
+            self.limpiar_formulario_solicitud(keep_message=True)
 
     def editar_solicitud(self, solicitud_id: int):
         solicitud = next((s for s in self.solicitudes if s["id"] == solicitud_id), None)
@@ -620,7 +625,8 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
             max_width="1100px",
             box_shadow="2xl",
             border_radius="2xl",
-            bg="#ffffff"
+            bg="white",
+            _dark={"bg": "gray.800"}
         )
 
     # Si no es registro extendido, renderizamos la forma simple (login)
@@ -729,7 +735,7 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
                 margin_top="1em"
             ),
             
-            rx.link("¿Ya tienes cuenta? Inicia sesión", href="/login", margin_top="0.5em"),
+            rx.link("¿No tienes cuenta? Regístrate", href="/registro", margin_top="0.5em"),
             spacing="4",
             align_items="center",
         ),
@@ -737,7 +743,8 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
         max_width="450px",
         box_shadow="2xl",
         border_radius="2xl",
-        bg="#f5f5f5"
+        bg="white",
+        _dark={"bg": "gray.800"}
     )
 
 
@@ -755,7 +762,8 @@ def navbar() -> rx.Component:
             padding="12px",
             width="100%",
             justify="center",
-            bg="#ffffff",
+            bg="white",
+            _dark={"bg": "gray.900", "borderColor": "gray.700"},
             box_shadow="md",
             border_bottom="1px solid #e6eef8",
             position="sticky",
@@ -930,6 +938,7 @@ def footer() -> rx.Component:
         padding_top="24px",
         padding_bottom="24px",
         bg="#f7fafc",
+        _dark={"bg": "gray.900", "borderColor": "gray.700"},
         border_top="1px solid #e2e8f0",
         justify="center"
     )
@@ -949,7 +958,8 @@ def brand_footer() -> rx.Component:
         width="100%",
         padding_top="12px",
         padding_bottom="12px",
-        bg="#ffffff",
+        bg="white",
+        _dark={"bg": "gray.900", "borderColor": "gray.700"},
         border_top="1px solid #e2e8f0"
     )
 
@@ -997,6 +1007,44 @@ def login_page() -> rx.Component:
                 align_items="center"
             ),
             min_height="85vh"
+        )
+    )
+
+def politica_privacidad_page() -> rx.Component:
+    return rx.container(
+        navbar(),
+        rx.center(
+            rx.box(
+                rx.vstack(
+                    rx.heading("Política de Privacidad y Protección de Datos", size="6", color="black"),
+                    rx.text(
+                        "En esta plataforma tratamos tus datos con responsabilidad, transparencia y seguridad. "
+                        "Tu información personal se usa únicamente para gestionar solicitudes PQRS y mejorar el servicio.",
+                        color="gray.700",
+                        font_size="md"
+                    ),
+                    rx.text(
+                        "Al enviar una solicitud aceptas la Política de Tratamiento de Datos Personales y los términos de uso de la plataforma.",
+                        color="gray.700",
+                        font_size="md"
+                    ),
+                    rx.heading("Datos recolectados", size="7", color="black"),
+                    rx.text("Correo electrónico, identificación, nombre, apellidos, teléfono y datos de ubicación para poder gestionar la solicitud."),
+                    rx.heading("Finalidad", size="7", color="black"),
+                    rx.text("Usar tus datos para contactar al ciudadano, radicar la solicitud en el sistema y generar trazabilidad de atención."),
+                    rx.heading("Derechos", size="7", color="black"),
+                    rx.text("Puedes solicitar corrección o eliminación de tus datos conforme a la normativa vigente de protección de datos personales."),
+                    rx.link("Volver al inicio", href="/", color_scheme="blue", font_weight="bold"),
+                    spacing="4",
+                    align_items="flex-start"
+                ),
+                p="8",
+                max_width="840px",
+                border_radius="2xl",
+                bg="white",
+                _dark={"bg": "gray.800"}
+            ),
+            min_height="84vh"
         )
     )
 
@@ -1066,7 +1114,7 @@ def solicitudes_page() -> rx.Component:
                                 # Descripción detallada (label + textarea + contador)
                                 rx.vstack(
                                     rx.text([rx.text("Descripción detallada ", font_weight="semibold"), rx.text("*", color="orange.500")]),
-                                    rx.text_area(placeholder="Escribe aquí los detalles de tu solicitud...", value=State.descripcion, on_change=State.set_descripcion, required=True, rows="4", max_length=1000, style={"resize": "vertical", "minHeight": "120px", "border": "1px solid #cbd5e1", "borderRadius": "8px", "padding": "8px"}),
+                                    rx.text_area(placeholder="Escribe aquí los detalles de tu solicitud...", value=State.descripcion, on_change=State.set_descripcion, required=True, rows="4", max_length=1000, style={"resize": "vertical", "minHeight": "120px", "border": "1px solid #cbd5e1", "borderRadius": "8px", "padding": "8px"}, _dark={"bg": "gray.700", "color": "white", "borderColor": "gray.600"}),
                                     rx.hstack(rx.spacer(), rx.text(State.descripcion_len, font_size="sm", color="gray.600"), rx.text(" / 1000 caracteres", font_size="sm", color="gray.600")),
                                 ),
                                 rx.input(
@@ -1091,6 +1139,7 @@ def solicitudes_page() -> rx.Component:
                                         border="2px dashed #cfe7ff",
                                         border_radius="8px",
                                         bg="#f8fbff",
+                                        _dark={"bg": "gray.700", "borderColor": "gray.600"},
                                         width="100%",
                                     )
                                 ),
@@ -1099,6 +1148,33 @@ def solicitudes_page() -> rx.Component:
                                 rx.cond(
                                     State.solicitud_mensaje,
                                     rx.text(State.solicitud_mensaje, color=rx.cond(State.solicitud_mensaje.contains("éxito"), "green.500", "red.500"))
+                                ),
+                                rx.cond(
+                                    State.solicitudes,
+                                    rx.vstack(
+                                        rx.heading("Solicitudes registradas", size="md", color="black"),
+                                        *[
+                                            rx.box(
+                                                rx.vstack(
+                                                    rx.text(f"#{solicitud['id']} - {solicitud['tipo_solicitud']}", font_weight="bold"),
+                                                    rx.text(f"Asunto: {solicitud['asunto']}"),
+                                                    rx.text(f"Descripción: {solicitud['descripcion']}"),
+                                                    rx.text(f"Ubicación: {solicitud['ubicacion'] or 'No especificada'}"),
+                                                    rx.text(f"Estado: {solicitud['estado']}"),
+                                                    rx.text(f"Fecha: {solicitud['fecha']}"),
+                                                ),
+                                                p="4",
+                                                border="1px solid #e2e8f0",
+                                                border_radius="lg",
+                                                bg="white",
+                                                _dark={"bg": "gray.800", "borderColor": "gray.700"},
+                                                width="100%"
+                                            )
+                                            for solicitud in State.solicitudes
+                                        ],
+                                        spacing="3",
+                                        width="100%"
+                                    )
                                 ),
                                 spacing="4",
                                 align_items="stretch"
@@ -1138,4 +1214,5 @@ app.add_page(registro_page, route="/registro", title="Registro de Ciudadano")
 app.add_page(login_page, route="/login", title="Iniciar Sesión")
 app.add_page(solicitudes_page, route="/solicitudes", title="Nueva Solicitud PQRS")
 app.add_page(change_password_page, route="/cambiar-contrasena", title="Cambiar Contraseña")
+app.add_page(politica_privacidad_page, route="/politica-privacidad", title="Política de Privacidad")
 app.add_page(dashboard, route="/dashboard", title="Panel de Ciudadano")
