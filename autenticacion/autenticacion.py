@@ -614,7 +614,7 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
                     rx.text(State.error_de_registro, color="red.500", font_size="sm", font_weight="bold"),
                     rx.text(State.succes, color="green.500", font_size="sm", font_weight="bold"),
 
-                    rx.hstack(rx.button(title, type="submit", color_scheme="blue", size="4", width="220px"), rx.link("¿Ya tienes cuenta? Inicia sesión", href="/login", margin_left="4"), spacing="4", justify="start"),
+                    rx.hstack(rx.button(title, type="submit", color_scheme="blue", size="4", width="220px"), rx.link("¿No tienes una cuenta? Registrate", href="/login", margin_left="4"), spacing="4", justify="start"),
 
                     spacing="4",
                     align_items="stretch"
