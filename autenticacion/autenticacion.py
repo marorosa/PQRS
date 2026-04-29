@@ -5,9 +5,10 @@ from datetime import datetime
 import bcrypt
 import base64
 import uuid
+import os
 import reflex as rx
-from .usuario_model import Usuario
-from sqlmodel import select
+from .usuario_model import Usuario, Solicitud
+from sqlmodel import select, SQLModel, create_engine
 from rxconfig import config
 import os
 import smtplib
@@ -15,11 +16,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 # Carpeta donde se guardarán los archivos subidos por los usuarios
-UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
-from typing import List, Dict
+UPLOAD_DIR = os.path.join(os.getcwd(), "assets", "uploads")
+from typing import List, Dict, Any
 
 # Cargar variables de entorno
 load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///reflex.db")
+engine = create_engine(DATABASE_URL, echo=False)
+SQLModel.metadata.create_all(engine)
 
 def tiene_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -156,6 +160,9 @@ class State(rx.State):
     
     id_usuario: int = 0
     es_autentica: bool = False
+    email_actual: str = ""
+    rol_usuario: str = ""
+    email_actual: str = ""
     show_password: bool = False
     # Campos para cambiar contraseña
     current_password: str = ""
@@ -265,6 +272,35 @@ class State(rx.State):
                 self.documento_nombre = ""
         except Exception:
             self.documento_nombre = ""
+
+    def _solicitud_a_dict(self, solicitud: Solicitud) -> Dict[str, Any]:
+        return {
+            "id": solicitud.id,
+            "radicado": solicitud.radicado,
+            "tipo_solicitud": solicitud.tipo_solicitud,
+            "asunto": solicitud.asunto,
+            "descripcion": solicitud.descripcion,
+            "ubicacion": solicitud.ubicacion,
+            "documento": solicitud.documento,
+            "documento_basename": solicitud.documento_basename,
+            "estado": solicitud.estado,
+            "fecha": solicitud.fecha.strftime("%Y-%m-%d %H:%M") if isinstance(solicitud.fecha, datetime) else str(solicitud.fecha),
+            "creado_por": solicitud.creado_por,
+            "usuario_id": solicitud.usuario_id,
+        }
+
+    def cargar_solicitudes(self):
+        try:
+            with rx.session() as session:
+                query = select(Solicitud).order_by(Solicitud.id)
+                if self.rol_usuario == "ciudadano" and self.email_actual:
+                    query = query.where(Solicitud.creado_por == self.email_actual)
+                solicitudes_obj = session.exec(query).all()
+                self.solicitudes = [self._solicitud_a_dict(s) for s in solicitudes_obj]
+        except Exception as e:
+            print(f"Error cargando solicitudes: {e}")
+            self.solicitudes = []
+
     def signup(self):
         self.borrar_mensajes_de_estado()
         if not self.validacion_de_entradas():
@@ -305,11 +341,59 @@ class State(rx.State):
             print(f"Usuario registrado: {self.correo}")
             # Enviar correo de bienvenida
             enviar_correo_bienvenida(self.correo, self.correo)
-            self.succes = "Registro exitoso. Revisa tu correo para confirmar. Ahora puedes iniciar sesión."
+            self.succes = "Registro exitoso. Revisa tu correo para confirmar. Ahora el funcionario puede iniciar sesión."
             self.error_de_registro = ""
             self.contraseña = ""
             self.confirmar_contraseña = ""
             self.show_password = False
+
+    def signup_funcionario(self):
+        self.borrar_mensajes_de_estado()
+        if not self.es_autentica or self.rol_usuario != "funcionario":
+            self.error_de_registro = "Solo los funcionarios autenticados pueden registrar nuevos funcionarios."
+            return
+        if not self.validacion_de_entradas():
+            return
+        required_fields = ["nombres", "apellidos", "tipo_identificacion", "numero_identificacion"]
+        for f in required_fields:
+            if not getattr(self, f, ""):
+                self.error_de_registro = "Completa los campos obligatorios de información personal."
+                return
+        if not self.acepta_politica_datos or not self.acepta_notificaciones:
+            self.error_de_registro = "Debes aceptar la política de datos y recibir notificaciones para registrarte."
+            return
+        with rx.session() as session:
+            existing_user = session.exec(select(Usuario).where(Usuario.email == self.correo)).first()
+            if existing_user:
+                self.error_de_registro = "El correo ya está registrado."
+                return
+            hashed = tiene_password(self.contraseña)
+            nuevo_usuario = Usuario(
+                email=self.correo,
+                Contraseña=hashed,
+                rol="funcionario",
+                is_active=True,
+                Fecha_de_creacion=datetime.now(),
+                tipo_identificacion=self.tipo_identificacion,
+                numero_identificacion=self.numero_identificacion,
+                nombres=self.nombres,
+                apellidos=self.apellidos,
+                genero=self.genero,
+                direccion=self.direccion,
+                telefono=self.telefono,
+                departamento=self.departamento,
+                ciudad=self.ciudad,
+            )
+            session.add(nuevo_usuario)
+            session.commit()
+            print(f"Funcionario registrado: {self.correo}")
+            enviar_correo_bienvenida(self.correo, self.correo)
+            self.succes = "Funcionario registrado con éxito. Ahora puede iniciar sesión con su correo institucional."
+            self.error_de_registro = ""
+            self.contraseña = ""
+            self.confirmar_contraseña = ""
+            self.show_password = False
+
     def login(self):
         self.borrar_mensajes_de_estado()
         if not self.validacion_de_entradas(require_strong_pw=False):
@@ -332,19 +416,26 @@ class State(rx.State):
                 self.succes2 = ""
                 return
             self.id_usuario = user.id
+            self.rol_usuario = user.rol
+            self.email_actual = user.email
             self.es_autentica = True
-            self.succes2 = "Inicio de sesión exitoso."
+            self.cargar_solicitudes()
+            self.succes2 = f"Inicio de sesión exitoso. Redirigiendo al {'dashboard de funcionario' if user.rol == 'funcionario' else 'dashboard de ciudadano'}..."
             self.error_de_contraseña = ""
             self.contraseña = ""
             self.confirmar_contraseña = ""
             self.show_password = False
-            return rx.redirect("/solicitudes")
+            if user.rol == "funcionario":
+                return rx.redirect("/dashboard-funcionario")
+            return rx.redirect("/dashboard")
     def logout(self):
         "cerrar sesion de usuario"
         self.id_usuario = 0
         self.correo = ""
         self.contraseña = ""
         self.confirmar_contraseña = ""
+        self.rol_usuario = ""
+        self.email_actual = ""
         self.es_autentica = False
         self.show_password = False
         self.succes2 = "Has cerrado sesión exitosamente."
@@ -392,14 +483,18 @@ class State(rx.State):
     def toggle_show_password(self):
         self.show_password = not self.show_password
 
-    def limpiar_formulario_solicitud(self):
+    def limpiar_formulario_solicitud(self, keep_message: bool = False):
         self.tipo_solicitud = ""
         self.asunto = ""
         self.descripcion = ""
         self.ubicacion = ""
         self.documento = ""
+        self.documento_nombre = ""
+        self.descripcion_len = 0
         self.editar_solicitud_id = 0
-        self.solicitud_mensaje = ""
+        self.acepta_politica_solicitud = False
+        if not keep_message:
+            self.solicitud_mensaje = ""
 
     def crear_solicitud(self):
         self.solicitud_mensaje = ""
@@ -410,80 +505,151 @@ class State(rx.State):
         if not self.acepta_politica_solicitud:
             self.solicitud_mensaje = "Debes aceptar la Política de Tratamiento de Datos Personales antes de enviar."
             return
-        if self.editar_solicitud_id:
-            for solicitud in self.solicitudes:
-                if solicitud["id"] == self.editar_solicitud_id:
-                    solicitud.update({
-                        "tipo_solicitud": self.tipo_solicitud,
-                        "asunto": self.asunto,
-                        "descripcion": self.descripcion,
-                        "ubicacion": self.ubicacion,
-                        "documento": self.documento,
-                        "estado": "Actualizada",
-                    })
-                    self.solicitud_mensaje = "Solicitud actualizada con éxito."
-                    break
-            self.editar_solicitud_id = 0
-        else:
-            nuevo_id = max([s["id"] for s in self.solicitudes], default=0) + 1
-            # Procesar y guardar el archivo adjunto si viene en self.documento
-            documento_guardado = ""
-            if self.documento:
-                try:
-                    os.makedirs(UPLOAD_DIR, exist_ok=True)
-                    # Caso: data URL (base64)
-                    if isinstance(self.documento, str) and self.documento.startswith("data:"):
-                        header, b64 = self.documento.split(",", 1)
-                        mime = header.split(";")[0].split(":")[1] if ":" in header else ""
-                        ext = mime.split("/")[-1] if "/" in mime else "bin"
-                        saved_name = f"adjunto_{uuid.uuid4().hex}.{ext}"
-                        path = os.path.join(UPLOAD_DIR, saved_name)
-                        with open(path, "wb") as f:
-                            f.write(base64.b64decode(b64))
-                        documento_guardado = path
-                    # Caso: objeto con 'content' y 'name'
-                    elif isinstance(self.documento, dict) and "content" in self.documento:
-                        content = self.documento.get("content")
-                        name = self.documento.get("name", f"adjunto_{uuid.uuid4().hex}")
-                        if isinstance(content, str) and content.startswith("data:"):
-                            _, b64 = content.split(",", 1)
-                            data = base64.b64decode(b64)
-                        else:
-                            data = base64.b64decode(content)
-                        path = os.path.join(UPLOAD_DIR, name)
-                        with open(path, "wb") as f:
-                            f.write(data)
-                        documento_guardado = path
-                    else:
-                        # Si viene solo el nombre o ruta, lo conservamos tal cual
-                        documento_guardado = str(self.documento)
-                except Exception as e:
-                    self.solicitud_mensaje = f"Error guardando documento: {e}"
-                    return
 
-            self.solicitudes.append({
-                "id": nuevo_id,
-                "tipo_solicitud": self.tipo_solicitud,
-                "asunto": self.asunto,
-                "descripcion": self.descripcion,
-                "ubicacion": self.ubicacion,
-                "documento": documento_guardado,
-                "estado": "Radicada",
-                "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            })
+        documento_guardado = ""
+        if self.documento:
+            try:
+                os.makedirs(UPLOAD_DIR, exist_ok=True)
+                # Caso: data URL (base64)
+                if isinstance(self.documento, str) and self.documento.startswith("data:"):
+                    header, b64 = self.documento.split(",", 1)
+                    mime = header.split(";")[0].split(":")[1] if ":" in header else ""
+                    ext = mime.split("/")[-1] if "/" in mime else "bin"
+                    saved_name = f"adjunto_{uuid.uuid4().hex}.{ext}"
+                    path = os.path.join(UPLOAD_DIR, saved_name)
+                    with open(path, "wb") as f:
+                        f.write(base64.b64decode(b64))
+                    documento_guardado = path
+                # Caso: objeto con 'content' y 'name'
+                elif isinstance(self.documento, dict) and "content" in self.documento:
+                    content = self.documento.get("content")
+                    name = self.documento.get("name", f"adjunto_{uuid.uuid4().hex}")
+                    if isinstance(content, str) and content.startswith("data:"):
+                        _, b64 = content.split(",", 1)
+                        data = base64.b64decode(b64)
+                    else:
+                        data = base64.b64decode(content)
+                    path = os.path.join(UPLOAD_DIR, name)
+                    with open(path, "wb") as f:
+                        f.write(data)
+                    documento_guardado = path
+                else:
+                    # Si viene solo el nombre o ruta, lo conservamos tal cual
+                    documento_guardado = str(self.documento)
+            except Exception as e:
+                self.solicitud_mensaje = f"Error guardando documento: {e}"
+                return
+
+        if self.editar_solicitud_id:
+            try:
+                with rx.session() as session:
+                    solicitud_obj = session.get(Solicitud, self.editar_solicitud_id)
+                    if not solicitud_obj:
+                        self.solicitud_mensaje = "Solicitud no encontrada para editar."
+                        return
+                    solicitud_obj.tipo_solicitud = self.tipo_solicitud
+                    solicitud_obj.asunto = self.asunto
+                    solicitud_obj.descripcion = self.descripcion
+                    solicitud_obj.ubicacion = self.ubicacion or None
+                    if documento_guardado:
+                        solicitud_obj.documento = documento_guardado
+                        solicitud_obj.documento_basename = os.path.basename(documento_guardado)
+                    solicitud_obj.estado = "Actualizada"
+                    session.add(solicitud_obj)
+                    session.commit()
+                self.solicitud_mensaje = "Solicitud actualizada con éxito."
+                self.editar_solicitud_id = 0
+                self.limpiar_formulario_solicitud(keep_message=True)
+                self.cargar_solicitudes()
+                return
+            except Exception as e:
+                self.solicitud_mensaje = f"Error actualizando solicitud: {e}"
+                return
+
+        try:
+            with rx.session() as session:
+                solicitud_obj = Solicitud(
+                    radicado=f"PQRS-{datetime.now().year}-{uuid.uuid4().hex[:8]}",
+                    tipo_solicitud=self.tipo_solicitud,
+                    asunto=self.asunto,
+                    descripcion=self.descripcion,
+                    ubicacion=self.ubicacion or None,
+                    documento=documento_guardado or None,
+                    documento_basename=os.path.basename(documento_guardado) if documento_guardado else None,
+                    estado="Radicada",
+                    fecha=datetime.now(),
+                    creado_por=self.email_actual or self.correo,
+                    usuario_id=self.id_usuario if self.id_usuario else None,
+                )
+                session.add(solicitud_obj)
+                session.commit()
             self.solicitud_mensaje = "Solicitud registrada correctamente."
-        self.limpiar_formulario_solicitud()
+            self.limpiar_formulario_solicitud(keep_message=True)
+            self.cargar_solicitudes()
+        except Exception as e:
+            self.solicitud_mensaje = f"Error guardando solicitud: {e}"
+
+    def signup_funcionario(self):
+        self.borrar_mensajes_de_estado()
+        if not self.validacion_de_entradas():
+            return
+        # Validaciones adicionales para registro de funcionario
+        required_fields = ["nombres", "apellidos", "tipo_identificacion", "numero_identificacion"]
+        for f in required_fields:
+            if not getattr(self, f, ""):
+                self.error_de_registro = "Completa los campos obligatorios de información personal."
+                return
+        if not self.acepta_politica_datos or not self.acepta_notificaciones:
+            self.error_de_registro = "Debes aceptar la política de datos y recibir notificaciones para registrarte."
+            return
+        with rx.session() as session:
+            existing_user = session.exec(select(Usuario).where(Usuario.email == self.correo)).first()
+            if existing_user:
+                self.error_de_registro = "El correo ya está registrado."
+                return
+            hashed = tiene_password(self.contraseña)
+            nuevo_funcionario = Usuario(
+                email=self.correo,
+                Contraseña=hashed,
+                rol="funcionario",
+                is_active=True,
+                Fecha_de_creacion=datetime.now(),
+                tipo_identificacion=self.tipo_identificacion,
+                numero_identificacion=self.numero_identificacion,
+                nombres=self.nombres,
+                apellidos=self.apellidos,
+                genero=self.genero,
+                direccion=self.direccion,
+                telefono=self.telefono,
+                departamento=self.departamento,
+                ciudad=self.ciudad,
+            )
+            session.add(nuevo_funcionario)
+            session.commit()
+            print(f"Funcionario registrado: {self.correo}")
+            enviar_correo_bienvenida(self.correo, self.correo)
+            self.succes = "Funcionario registrado con éxito. Ahora puede iniciar sesión con su correo institucional."
+            self.error_de_registro = ""
+            self.contraseña = ""
+            self.confirmar_contraseña = ""
+            self.show_password = False
 
     def editar_solicitud(self, solicitud_id: int):
-        solicitud = next((s for s in self.solicitudes if s["id"] == solicitud_id), None)
-        if solicitud:
-            self.editar_solicitud_id = solicitud_id
-            self.tipo_solicitud = solicitud["tipo_solicitud"]
-            self.asunto = solicitud["asunto"]
-            self.descripcion = solicitud["descripcion"]
-            self.ubicacion = solicitud["ubicacion"]
-            self.documento = solicitud["documento"]
-            self.solicitud_mensaje = "Editando solicitud. Actualiza los campos y guarda cambios."
+        try:
+            with rx.session() as session:
+                solicitud_obj = session.get(Solicitud, solicitud_id)
+                if solicitud_obj:
+                    self.editar_solicitud_id = solicitud_id
+                    self.tipo_solicitud = solicitud_obj.tipo_solicitud
+                    self.asunto = solicitud_obj.asunto
+                    self.descripcion = solicitud_obj.descripcion
+                    self.ubicacion = solicitud_obj.ubicacion or ""
+                    self.documento = solicitud_obj.documento or ""
+                    self.solicitud_mensaje = "Editando solicitud. Actualiza los campos y guarda cambios."
+                else:
+                    self.solicitud_mensaje = "Solicitud no encontrada."
+        except Exception as e:
+            self.solicitud_mensaje = f"Error cargando solicitud: {e}"
 
     def eliminar_solicitud(self, solicitud_id: int):
         self.solicitudes = [s for s in self.solicitudes if s["id"] != solicitud_id]
@@ -620,7 +786,8 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
             max_width="1100px",
             box_shadow="2xl",
             border_radius="2xl",
-            bg="#ffffff"
+            bg="white",
+            _dark={"bg": "gray.800"}
         )
 
     # Si no es registro extendido, renderizamos la forma simple (login)
@@ -729,7 +896,7 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
                 margin_top="1em"
             ),
             
-            rx.link("¿Ya tienes cuenta? Inicia sesión", href="/login", margin_top="0.5em"),
+            rx.link("¿No tienes cuenta? Regístrate", href="/registro", margin_top="0.5em"),
             spacing="4",
             align_items="center",
         ),
@@ -737,7 +904,8 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
         max_width="450px",
         box_shadow="2xl",
         border_radius="2xl",
-        bg="#f5f5f5"
+        bg="white",
+        _dark={"bg": "gray.800"}
     )
 
 
@@ -749,13 +917,33 @@ def navbar() -> rx.Component:
             rx.link("Inicio", href="/", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
             rx.link("Nueva Solicitud", href="/solicitudes", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
             rx.link("Registro de Ciudadano", href="/registro", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
+            rx.cond(
+                State.es_autentica & (State.rol_usuario == "funcionario"),
+                rx.link("Registrar Funcionario", href="/registro-funcionario", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
+                rx.text("")
+            ),
+            rx.cond(
+                State.es_autentica & (State.rol_usuario == "funcionario"),
+                rx.link("Dashboard Funcionario", href="/dashboard-funcionario", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
+                rx.text("")
+            ),
+            rx.cond(
+                State.es_autentica & (State.rol_usuario != "funcionario"),
+                rx.link("Mi Dashboard", href="/dashboard", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
+                rx.text("")
+            ),
             rx.cond(State.es_autentica, rx.link("Cambiar Contraseña", href="/cambiar-contrasena", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}), rx.text("")),
-            rx.link("Iniciar Sesión", href="/login", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"}),
+            rx.cond(
+                State.es_autentica,
+                rx.button("Cerrar Sesión", on_click=State.logout, color_scheme="red", size="4"),
+                rx.link("Iniciar Sesión", href="/login", font_weight="bold", color_scheme="blue", text_decoration="none", _hover={"color":"gray.100"})
+            ),
             spacing="6",
             padding="12px",
             width="100%",
             justify="center",
-            bg="#ffffff",
+            bg="white",
+            _dark={"bg": "gray.900", "borderColor": "gray.700"},
             box_shadow="md",
             border_bottom="1px solid #e6eef8",
             position="sticky",
@@ -930,6 +1118,7 @@ def footer() -> rx.Component:
         padding_top="24px",
         padding_bottom="24px",
         bg="#f7fafc",
+        _dark={"bg": "gray.900", "borderColor": "gray.700"},
         border_top="1px solid #e2e8f0",
         justify="center"
     )
@@ -949,7 +1138,8 @@ def brand_footer() -> rx.Component:
         width="100%",
         padding_top="12px",
         padding_bottom="12px",
-        bg="#ffffff",
+        bg="white",
+        _dark={"bg": "gray.900", "borderColor": "gray.700"},
         border_top="1px solid #e2e8f0"
     )
 
@@ -960,6 +1150,32 @@ def registro_page() -> rx.Component:
             # Llamamos a auth_card con la función de signup y pidiendo confirmación
             auth_card("Registrarme como Ciudadano", State.signup, show_confirm=True),
             min_height="8vh"
+        )
+    )
+
+
+def registro_funcionario_page() -> rx.Component:
+    return rx.cond(
+        State.es_autentica & (State.rol_usuario == "funcionario"),
+        rx.container(
+            navbar(),
+            rx.center(
+                auth_card("Registrar Funcionario", State.signup_funcionario, show_confirm=True),
+                min_height="8vh"
+            )
+        ),
+        rx.container(
+            navbar(),
+            rx.center(
+                rx.vstack(
+                    rx.heading("Acceso Denegado", size="8", color="red.500"),
+                    rx.text("Solo los funcionarios autenticados pueden registrar nuevos funcionarios."),
+                    rx.link(rx.button("Ir al Login", color_scheme="blue"), href="/login"),
+                    spacing="4",
+                    align_items="center"
+                ),
+                min_height="84vh"
+            )
         )
     )
 
@@ -1000,9 +1216,47 @@ def login_page() -> rx.Component:
         )
     )
 
+def politica_privacidad_page() -> rx.Component:
+    return rx.container(
+        navbar(),
+        rx.center(
+            rx.box(
+                rx.vstack(
+                    rx.heading("Política de Privacidad y Protección de Datos", size="6", color="black"),
+                    rx.text(
+                        "En esta plataforma tratamos tus datos con responsabilidad, transparencia y seguridad. "
+                        "Tu información personal se usa únicamente para gestionar solicitudes PQRS y mejorar el servicio.",
+                        color="gray.700",
+                        font_size="md"
+                    ),
+                    rx.text(
+                        "Al enviar una solicitud aceptas la Política de Tratamiento de Datos Personales y los términos de uso de la plataforma.",
+                        color="gray.700",
+                        font_size="md"
+                    ),
+                    rx.heading("Datos recolectados", size="7", color="black"),
+                    rx.text("Correo electrónico, identificación, nombre, apellidos, teléfono y datos de ubicación para poder gestionar la solicitud."),
+                    rx.heading("Finalidad", size="7", color="black"),
+                    rx.text("Usar tus datos para contactar al ciudadano, radicar la solicitud en el sistema y generar trazabilidad de atención."),
+                    rx.heading("Derechos", size="7", color="black"),
+                    rx.text("Puedes solicitar corrección o eliminación de tus datos conforme a la normativa vigente de protección de datos personales."),
+                    rx.link("Volver al inicio", href="/", color_scheme="blue", font_weight="bold"),
+                    spacing="4",
+                    align_items="flex-start"
+                ),
+                p="8",
+                max_width="840px",
+                border_radius="2xl",
+                bg="white",
+                _dark={"bg": "gray.800"}
+            ),
+            min_height="84vh"
+        )
+    )
+
 def dashboard() -> rx.Component:
     return rx.cond(
-        State.es_autentica,
+        State.es_autentica & (State.rol_usuario == "ciudadano"),
         rx.container(
             navbar(),
             rx.center(
@@ -1028,7 +1282,97 @@ def dashboard() -> rx.Component:
             rx.center(
                 rx.vstack(
                     rx.heading("Acceso Denegado", size="8", color="red.500"),
-                    rx.text("Necesitas iniciar sesión para acceder a esta página."),
+                    rx.text("Esta página es solo para ciudadanos. Si eres funcionario, ve a tu dashboard.", color="gray.600"),
+                    rx.link(rx.button("Ir al Dashboard Funcionario", color_scheme="blue"), href="/dashboard-funcionario"),
+                    rx.link(rx.button("Ir al Login", color_scheme="gray"), href="/login"),
+                    spacing="4",
+                    align_items="center"
+                ),
+                min_height="84vh"
+            )
+        )
+    )
+
+
+def funcionario_dashboard() -> rx.Component:
+    return rx.cond(
+        State.es_autentica & (State.rol_usuario == "funcionario"),
+        rx.container(
+            navbar(),
+            rx.center(
+                rx.vstack(
+                    rx.heading("Panel de Funcionario", size="8", color="black"),
+                    rx.text("Bienvenido, funcionario. Esta es tu página principal donde puedes revisar todas las peticiones.", color="gray.600"),
+                    rx.text("Usa el menú superior para navegar: 'Nueva Solicitud' para crear peticiones, 'Registrar Funcionario' para añadir nuevos funcionarios.", color="gray.500"),
+                    rx.box(
+                        rx.vstack(
+                            rx.cond(
+                                State.solicitudes,
+                                rx.vstack(
+                                    rx.foreach(
+                                        State.solicitudes,
+                                        lambda solicitud: rx.box(
+                                            rx.vstack(
+                                                rx.heading(f"Radicado: {solicitud['radicado']} - {solicitud['tipo_solicitud']}", size="6", color="black"),
+                                                rx.text(f"Asunto: {solicitud['asunto']}", color="gray.700"),
+                                                rx.text(f"Descripción: {solicitud['descripcion']}", color="gray.700"),
+                                                rx.text(f"Creado por: {solicitud.get('creado_por', 'Desconocido')}", color="gray.600"),
+                                                rx.text(
+                                                    "Ubicación: ",
+                                                    rx.cond(
+                                                        solicitud["ubicacion"],
+                                                        solicitud["ubicacion"],
+                                                        "No especificada"
+                                                    ),
+                                                    color="gray.600"
+                                                ),
+                                                rx.text(f"Estado: {solicitud['estado']}", color="gray.600"),
+                                                rx.text(f"Fecha: {solicitud['fecha']}", color="gray.600"),
+                                                rx.cond(
+                                                    solicitud["documento"],
+                                                    rx.hstack(
+                                                        rx.text("Documento: ", color="gray.600"),
+                                                        rx.link(
+                                                            solicitud["documento_basename"],
+                                                            href=f"/uploads/{solicitud['documento_basename']}",
+                                                            color="blue.600",
+                                                            target="_blank"
+                                                        )
+                                                    ),
+                                                    rx.text("Documento: No adjunto", color="gray.600")
+                                                ),
+                                                spacing="2",
+                                                align_items="start"
+                                            ),
+                                            p="4",
+                                            border="1px solid #e2e8f0",
+                                            border_radius="lg",
+                                            bg="white",
+                                            _dark={"bg": "gray.800", "borderColor": "gray.700"},
+                                            width="100%"
+                                        )
+                                    ),
+                                    spacing="4"
+                                ),
+                                rx.text("No hay solicitudes registradas aún.", color="gray.600", font_size="md")
+                            ),
+                            spacing="4"
+                        ),
+                        width="100%"
+                    ),
+                    rx.button("Cerrar Sesión", on_click=State.logout, color_scheme="red", width="100%"),
+                    spacing="6",
+                    align_items="stretch"
+                ),
+                min_height="84vh"
+            )
+        ),
+        rx.container(
+            navbar(),
+            rx.center(
+                rx.vstack(
+                    rx.heading("Acceso Denegado", size="8", color="red.500"),
+                    rx.text("Solo los funcionarios autenticados pueden acceder a esta página."),
                     rx.link(rx.button("Ir al Login", color_scheme="blue"), href="/login"),
                     spacing="4",
                     align_items="center"
@@ -1066,7 +1410,7 @@ def solicitudes_page() -> rx.Component:
                                 # Descripción detallada (label + textarea + contador)
                                 rx.vstack(
                                     rx.text([rx.text("Descripción detallada ", font_weight="semibold"), rx.text("*", color="orange.500")]),
-                                    rx.text_area(placeholder="Escribe aquí los detalles de tu solicitud...", value=State.descripcion, on_change=State.set_descripcion, required=True, rows="4", max_length=1000, style={"resize": "vertical", "minHeight": "120px", "border": "1px solid #cbd5e1", "borderRadius": "8px", "padding": "8px"}),
+                                    rx.text_area(placeholder="Escribe aquí los detalles de tu solicitud...", value=State.descripcion, on_change=State.set_descripcion, required=True, rows="4", max_length=1000, style={"resize": "vertical", "minHeight": "120px", "border": "1px solid #cbd5e1", "borderRadius": "8px", "padding": "8px"}, _dark={"bg": "gray.700", "color": "white", "borderColor": "gray.600"}),
                                     rx.hstack(rx.spacer(), rx.text(State.descripcion_len, font_size="sm", color="gray.600"), rx.text(" / 1000 caracteres", font_size="sm", color="gray.600")),
                                 ),
                                 rx.input(
@@ -1091,6 +1435,7 @@ def solicitudes_page() -> rx.Component:
                                         border="2px dashed #cfe7ff",
                                         border_radius="8px",
                                         bg="#f8fbff",
+                                        _dark={"bg": "gray.700", "borderColor": "gray.600"},
                                         width="100%",
                                     )
                                 ),
@@ -1099,6 +1444,43 @@ def solicitudes_page() -> rx.Component:
                                 rx.cond(
                                     State.solicitud_mensaje,
                                     rx.text(State.solicitud_mensaje, color=rx.cond(State.solicitud_mensaje.contains("éxito"), "green.500", "red.500"))
+                                ),
+                                rx.cond(
+                                    State.solicitudes,
+                                    rx.vstack(
+                                        rx.heading("Solicitudes registradas", size="6", color="black"),
+
+                                        rx.foreach(
+                                            State.solicitudes,
+                                            lambda solicitud: rx.box(
+                                                rx.vstack(
+                                                    rx.text(f"#{solicitud['id']} - {solicitud['tipo_solicitud']}", font_weight="bold"),
+                                                    rx.text(f"Asunto: {solicitud['asunto']}"),
+                                                    rx.text(f"Descripción: {solicitud['descripcion']}"),
+                                                    rx.text(f"Creado por: {solicitud.get('creado_por', 'Desconocido')}"),
+                                                    rx.text(
+                                                        "Ubicación: ",
+                                                        rx.cond(
+                                                            solicitud["ubicacion"],
+                                                            solicitud["ubicacion"],
+                                                            "No especificada"
+                                                        )
+                                                    ),
+                                                    rx.text(f"Estado: {solicitud['estado']}"),
+                                                    rx.text(f"Fecha: {solicitud['fecha']}"),
+                                                ),
+                                                p="4",
+                                                border="1px solid #e2e8f0",
+                                                border_radius="lg",
+                                                bg="white",
+                                                _dark={"bg": "gray.800", "borderColor": "gray.700"},
+                                                width="100%"
+                                            )
+                                        ),
+
+                                        spacing="3",
+                                        width="100%"
+                                    )
                                 ),
                                 spacing="4",
                                 align_items="stretch"
@@ -1135,7 +1517,10 @@ def solicitudes_page() -> rx.Component:
 app = rx.App()
 app.add_page(index, route="/", title="Inicio - Sistema PQRS")
 app.add_page(registro_page, route="/registro", title="Registro de Ciudadano")
+app.add_page(registro_funcionario_page, route="/registro-funcionario", title="Registro de Funcionario")
 app.add_page(login_page, route="/login", title="Iniciar Sesión")
 app.add_page(solicitudes_page, route="/solicitudes", title="Nueva Solicitud PQRS")
 app.add_page(change_password_page, route="/cambiar-contrasena", title="Cambiar Contraseña")
 app.add_page(dashboard, route="/dashboard", title="Panel de Ciudadano")
+app.add_page(funcionario_dashboard, route="/dashboard-funcionario", title="Panel de Funcionario")
+app.add_page(politica_privacidad_page, route="/politica-privacidad", title="Política de Privacidad")
