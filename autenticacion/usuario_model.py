@@ -32,7 +32,9 @@ class Solicitud(rx.Model, table=True):
     ubicacion: Optional[str] = None
     documento: Optional[str] = None
     documento_basename: Optional[str] = None
+    area_responsable: Optional[str] = None
     estado: str = "Radicada"
+    respuesta: Optional[str] = None
     fecha: datetime = Field(default_factory=datetime.now)
     creado_por: Optional[str] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")

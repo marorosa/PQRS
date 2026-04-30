@@ -142,6 +142,8 @@ class State(rx.State):
     acepta_politica_datos: bool = False
     # Para el formulario de solicitudes
     acepta_politica_solicitud: bool = False
+    area_responsable: str = ""
+    area_otro: str = ""
     tipo_solicitud: str = ""
     asunto: str = ""
     descripcion: str = ""
@@ -169,6 +171,11 @@ class State(rx.State):
     new_password: str = ""
     confirm_new_password: str = ""
     change_pw_message: str = ""
+    # Campos para editar estado de solicitud
+    editar_estado_id: int = 0
+    nuevo_estado: str = ""
+    respuesta_solicitud: str = ""
+    mensaje_actualizar_estado: str = ""
     
     def borrar_mensajes_de_estado(self):
         self.error_de_registro = ""
@@ -273,6 +280,62 @@ class State(rx.State):
         except Exception:
             self.documento_nombre = ""
 
+    def set_area_responsable(self, val: str):
+        self.area_responsable = val
+        if val != "Otros":
+            self.area_otro = ""
+
+    def set_area_otro(self, val: str):
+        self.area_otro = val
+
+    def set_nuevo_estado(self, val: str):
+        self.nuevo_estado = val
+
+    def set_respuesta_solicitud(self, val: str):
+        self.respuesta_solicitud = val
+
+    def actualizar_estado_solicitud(self):
+        """Actualiza el estado de una solicitud con validación para cerrada."""
+        self.mensaje_actualizar_estado = ""
+        
+        if not self.editar_estado_id or not self.nuevo_estado:
+            self.mensaje_actualizar_estado = "Selecciona un estado válido."
+            return
+        
+        # Validar que si se quiere cerrar, debe haber respuesta
+        if self.nuevo_estado == "Cerrada" and not self.respuesta_solicitud:
+            self.mensaje_actualizar_estado = "No puedes cerrar una solicitud sin escribir una respuesta."
+            return
+        
+        try:
+            with rx.session() as session:
+                solicitud_obj = session.get(Solicitud, self.editar_estado_id)
+                if not solicitud_obj:
+                    self.mensaje_actualizar_estado = "Solicitud no encontrada."
+                    return
+                
+                solicitud_obj.estado = self.nuevo_estado
+                if self.respuesta_solicitud:
+                    solicitud_obj.respuesta = self.respuesta_solicitud
+                
+                session.add(solicitud_obj)
+                session.commit()
+            
+            self.mensaje_actualizar_estado = f"Estado actualizado a '{self.nuevo_estado}' correctamente."
+            self.editar_estado_id = 0
+            self.nuevo_estado = ""
+            self.respuesta_solicitud = ""
+            self.cargar_solicitudes()
+        except Exception as e:
+            self.mensaje_actualizar_estado = f"Error actualizando estado: {e}"
+
+    def abrir_editor_estado(self, solicitud_id: int, estado_actual: str):
+        """Abre el editor de estado para una solicitud."""
+        self.editar_estado_id = solicitud_id
+        self.nuevo_estado = estado_actual
+        self.respuesta_solicitud = ""
+        self.mensaje_actualizar_estado = ""
+
     def _solicitud_a_dict(self, solicitud: Solicitud) -> Dict[str, Any]:
         return {
             "id": solicitud.id,
@@ -281,9 +344,11 @@ class State(rx.State):
             "asunto": solicitud.asunto,
             "descripcion": solicitud.descripcion,
             "ubicacion": solicitud.ubicacion,
+            "area_responsable": solicitud.area_responsable,
             "documento": solicitud.documento,
             "documento_basename": solicitud.documento_basename,
             "estado": solicitud.estado,
+            "respuesta": solicitud.respuesta,
             "fecha": solicitud.fecha.strftime("%Y-%m-%d %H:%M") if isinstance(solicitud.fecha, datetime) else str(solicitud.fecha),
             "creado_por": solicitud.creado_por,
             "usuario_id": solicitud.usuario_id,
@@ -490,6 +555,8 @@ class State(rx.State):
         self.ubicacion = ""
         self.documento = ""
         self.documento_nombre = ""
+        self.area_responsable = ""
+        self.area_otro = ""
         self.descripcion_len = 0
         self.editar_solicitud_id = 0
         self.acepta_politica_solicitud = False
@@ -500,6 +567,12 @@ class State(rx.State):
         self.solicitud_mensaje = ""
         if not self.tipo_solicitud or not self.asunto or not self.descripcion:
             self.solicitud_mensaje = "Completa los campos obligatorios antes de enviar."
+            return
+        if not self.area_responsable:
+            self.solicitud_mensaje = "Selecciona el área responsable."
+            return
+        if self.area_responsable == "Otros" and not self.area_otro:
+            self.solicitud_mensaje = "Por favor indica el área responsable cuando eliges Otros."
             return
         # Verificar aceptación de política de tratamiento de datos
         if not self.acepta_politica_solicitud:
@@ -551,6 +624,7 @@ class State(rx.State):
                     solicitud_obj.asunto = self.asunto
                     solicitud_obj.descripcion = self.descripcion
                     solicitud_obj.ubicacion = self.ubicacion or None
+                    solicitud_obj.area_responsable = self.area_otro if self.area_responsable == "Otros" else self.area_responsable
                     if documento_guardado:
                         solicitud_obj.documento = documento_guardado
                         solicitud_obj.documento_basename = os.path.basename(documento_guardado)
@@ -574,6 +648,7 @@ class State(rx.State):
                     asunto=self.asunto,
                     descripcion=self.descripcion,
                     ubicacion=self.ubicacion or None,
+                    area_responsable=self.area_otro if self.area_responsable == "Otros" else self.area_responsable,
                     documento=documento_guardado or None,
                     documento_basename=os.path.basename(documento_guardado) if documento_guardado else None,
                     estado="Radicada",
@@ -644,6 +719,8 @@ class State(rx.State):
                     self.asunto = solicitud_obj.asunto
                     self.descripcion = solicitud_obj.descripcion
                     self.ubicacion = solicitud_obj.ubicacion or ""
+                    self.area_responsable = solicitud_obj.area_responsable or ""
+                    self.area_otro = solicitud_obj.area_responsable if solicitud_obj.area_responsable and solicitud_obj.area_responsable not in ["Secretaría", "Contabilidad", "Bienestar", "Tesorería", "Atención al Ciudadano"] else ""
                     self.documento = solicitud_obj.documento or ""
                     self.solicitud_mensaje = "Editando solicitud. Actualiza los campos y guarda cambios."
                 else:
@@ -1326,6 +1403,15 @@ def funcionario_dashboard() -> rx.Component:
                                                     ),
                                                     color="gray.600"
                                                 ),
+                                                rx.text(
+                                                    "Área responsable: ",
+                                                    rx.cond(
+                                                        solicitud["area_responsable"],
+                                                        solicitud["area_responsable"],
+                                                        "No especificada"
+                                                    ),
+                                                    color="gray.600"
+                                                ),
                                                 rx.text(f"Estado: {solicitud['estado']}", color="gray.600"),
                                                 rx.text(f"Fecha: {solicitud['fecha']}", color="gray.600"),
                                                 rx.cond(
@@ -1419,6 +1505,36 @@ def solicitudes_page() -> rx.Component:
                                     on_change=State.set_ubicacion
                                 ),
 
+                                rx.vstack(
+                                    rx.text([rx.text("Área Responsable ", font_weight="semibold"), rx.text("*", color="orange.500")]),
+                                    rx.select(
+                                        ["Secretaría", "Contabilidad", "Bienestar", "Tesorería", "Atención al Ciudadano", "Otros"],
+                                        placeholder="Selecciona el área responsable",
+                                        value=State.area_responsable,
+                                        on_change=State.set_area_responsable,
+                                        required=True,
+                                        bg="white",
+                                        border="1px solid #cbd5e1",
+                                        border_radius="md",
+                                    ),
+                                ),
+
+                                rx.cond(
+                                    State.area_responsable == "Otros",
+                                    rx.vstack(
+                                        rx.text([rx.text("Otra área", font_weight="semibold"), rx.text("*", color="orange.500")]),
+                                        rx.input(
+                                            placeholder="Escribe el área responsable",
+                                            value=State.area_otro,
+                                            on_change=State.set_area_otro,
+                                            required=True,
+                                            bg="white",
+                                            border="1px solid #cbd5e1",
+                                            border_radius="md",
+                                        ),
+                                    )
+                                ),
+
                                 # Archivo adjunto: zona arrastrar y soltar moderna
                                 rx.vstack(
                                     rx.text("Documento adjunto (opcional)", font_weight="semibold"),
@@ -1463,6 +1579,14 @@ def solicitudes_page() -> rx.Component:
                                                         rx.cond(
                                                             solicitud["ubicacion"],
                                                             solicitud["ubicacion"],
+                                                            "No especificada"
+                                                        )
+                                                    ),
+                                                    rx.text(
+                                                        "Área responsable: ",
+                                                        rx.cond(
+                                                            solicitud["area_responsable"],
+                                                            solicitud["area_responsable"],
                                                             "No especificada"
                                                         )
                                                     ),
