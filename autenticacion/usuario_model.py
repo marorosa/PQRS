@@ -21,8 +21,6 @@ class Usuario(rx.Model, table=True):
     telefono: Optional[str] = None
     departamento: Optional[str] = None
     ciudad: Optional[str] = None
-<<<<<<< HEAD
-=======
 
 class Solicitud(rx.Model, table=True):
     "Tabla de solicitudes PQRS"
@@ -38,5 +36,4 @@ class Solicitud(rx.Model, table=True):
     fecha: datetime = Field(default_factory=datetime.now)
     creado_por: Optional[str] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
->>>>>>> e2b305b84823c9d11bb994642ecae2240d4e6dcb
     
