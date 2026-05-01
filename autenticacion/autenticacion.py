@@ -780,6 +780,13 @@ def auth_card(title: str, on_submit, show_confirm: bool = False) -> rx.Component
                 rx.vstack(
                     rx.heading(title, size="7", color=text_color, margin_bottom="1em"),
                     rx.grid(
+                        rx.vstack(rx.text([rx.text("Correo electrónico ", color=text_color), rx.text("*", color="orange.500")]), rx.hstack(rx.input(placeholder="Correo electrónico", type="email", value=State.correo, on_change=State.set_correo, border_radius="md", **input_style), rx.cond(State.correo_validado, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
+                        rx.vstack(rx.text([rx.text("Contraseña ", color=text_color), rx.text("*", color="orange.500")]), rx.hstack(rx.input(placeholder="Contraseña", type="password", value=State.contraseña, on_change=State.set_contraseña, border_radius="md", **input_style), rx.button(rx.cond(State.show_password, rx.icon("eye_off"), rx.icon("eye")), on_click=State.toggle_show_password, variant="ghost", size="2"))),
+                        rx.cond(
+                            State.show_password,
+                            rx.vstack(rx.text([rx.text("Confirmar Contraseña ", color=text_color), rx.text("*", color="orange.500")]), rx.input(placeholder="Confirmar Contraseña", type="password", value=State.confirmar_contraseña, on_change=State.set_confirmar_contraseña, border_radius="md", **input_style)),
+                            rx.text("", display="none")
+                        ),
                         rx.vstack(rx.text("Tipo de Identificación", font_weight="semibold", color=text_color), rx.select(["Cédula", "Pasaporte", "Tarjeta de Identidad"], placeholder="Selecciona", value=State.tipo_identificacion, on_change=State.set_tipo_identificacion, border_radius="md", **input_style)),
                         rx.vstack(rx.text([rx.text("Número de Identificación ", color=text_color), rx.text("*", color="orange.500")]), rx.hstack(rx.input(placeholder="Número de Identificación", value=State.numero_identificacion, on_change=State.set_and_validate_numero_identificacion, border_radius="md", **input_style), rx.cond(State.numero_identificacion_valid, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
                         rx.vstack(rx.text([rx.text("Nombres ", color=text_color), rx.text("*", color="orange.500")]), rx.hstack(rx.input(placeholder="Nombres", value=State.nombres, on_change=State.set_and_validate_nombres, border_radius="md", **input_style), rx.cond(State.nombres_valid, rx.image(src="/check-green.svg", height="16px", ml="2"), rx.text("")))),
@@ -828,7 +835,20 @@ def navbar() -> rx.Component:
                 rx.link("Inicio", href="/", color="white", font_weight="bold", _hover={"opacity": 0.8}),
                 rx.link("Nueva Solicitud", href="/solicitudes", color="white", font_weight="bold", _hover={"opacity": 0.8}),
                 rx.link("Registro de Ciudadano", href="/registro", color="white", font_weight="bold", _hover={"opacity": 0.8}),
-                rx.link("Dashboard", href="/dashboard", color="white", font_weight="bold", _hover={"opacity": 0.8}),
+                rx.cond(
+                    State.es_autentica & (State.rol_usuario == "funcionario"),
+                    rx.link("Registrar Funcionario", href="/registro-funcionario", color="white", font_weight="bold", _hover={"opacity": 0.8}),
+                    rx.text("", display="none")
+                ),
+                rx.cond(
+                    State.es_autentica,
+                    rx.cond(
+                        State.rol_usuario == "funcionario",
+                        rx.link("Dashboard Funcionario", href="/dashboard-funcionario", color="white", font_weight="bold", _hover={"opacity": 0.8}),
+                        rx.link("Dashboard", href="/dashboard", color="white", font_weight="bold", _hover={"opacity": 0.8})
+                    ),
+                    rx.link("Dashboard", href="/dashboard", color="white", font_weight="bold", _hover={"opacity": 0.8})
+                ),
                 spacing="6", # Espacio entre links
             ),
             # Botón de cerrar sesión a la derecha

@@ -18,9 +18,14 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
+<<<<<<< HEAD
+from autenticacion.usuario_model import Usuario, Solicitud
+target_metadata = [Usuario.__table__, Solicitud.__table__]
+=======
 import sqlmodel
 from autenticacion.usuario_model import Usuario, Solicitud
 target_metadata = sqlmodel.SQLModel.metadata
+>>>>>>> 2522f5a7673fbddfce9cd4758402a1f5cb78591b
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
