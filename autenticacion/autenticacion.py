@@ -12,6 +12,7 @@ from rxconfig import config
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from starlette.staticfiles import StaticFiles
 from dotenv import load_dotenv
 # Carpeta donde se guardarán los archivos subidos por los usuarios
 UPLOAD_DIR = os.path.join(os.getcwd(), "assets", "uploads")
@@ -147,8 +148,12 @@ class State(rx.State):
     documento: str = ""
     documento_nombre: str = ""
     descripcion_len: int = 0
+    query_solicitud: str = ""
+    filter_tipo_solicitud: str = "Todas"
+    filter_estado_solicitud: str = "Todas"
     solicitudes: List[Dict] = []
     editar_solicitud_id: int = 0
+    eliminar_solicitud_id: int = 0
     solicitud_mensaje: str = ""
     
     error_de_registro: str = ""
@@ -166,6 +171,62 @@ class State(rx.State):
     new_password: str = ""
     confirm_new_password: str = ""
     change_pw_message: str = ""
+    
+    # Campos para búsqueda y filtros en dashboard funcionario
+    busqueda_solicitudes: str = ""
+    filtro_estado: str = ""
+    filtro_tipo_solicitud: str = ""
+    
+    @rx.var
+    def numero_solicitudes(self) -> str:
+        return str(len(self.solicitudes or []))
+    
+    @rx.var
+    def numero_solicitudes_radicadas(self) -> str:
+        return str(sum(1 for solicitud in (self.solicitudes or []) if solicitud.get('estado') == 'Radicada'))
+    
+    @rx.var
+    def numero_solicitudes_actualizadas(self) -> str:
+        return str(sum(1 for solicitud in (self.solicitudes or []) if solicitud.get('estado') == 'Actualizada'))
+    
+    @rx.var
+    def numero_solicitudes_cerradas(self) -> str:
+        return str(sum(1 for solicitud in (self.solicitudes or []) if solicitud.get('estado') == 'Cerrada'))
+    
+    @rx.var
+    def solicitudes_filtradas(self) -> list[dict]:
+        query = (self.query_solicitud or "").strip().lower()
+        tipo = (self.filter_tipo_solicitud or "Todas").lower()
+        estado = (self.filter_estado_solicitud or "Todas").lower()
+        resultados = []
+        for solicitud in self.solicitudes or []:
+            texto = " ".join(
+                str(solicitud.get(field, "") or "")
+                for field in ("radicado", "asunto", "descripcion", "creado_por")
+            ).lower()
+            if query and query not in texto:
+                continue
+            if tipo != "todas" and solicitud.get("tipo_solicitud", "").lower() != tipo:
+                continue
+            if estado != "todas" and solicitud.get("estado", "").lower() != estado:
+                continue
+            resultados.append(solicitud)
+        return resultados
+    
+    def set_query_solicitud(self, value: str):
+        self.query_solicitud = value or ""
+    
+    def set_filter_tipo_solicitud(self, value: str):
+        self.filter_tipo_solicitud = value or "Todas"
+    
+    def set_filter_estado_solicitud(self, value: str):
+        self.filter_estado_solicitud = value or "Todas"
+    
+    def set_new_password(self, value: str):
+        self.new_password = value
+    
+    def set_confirm_new_password(self, value: str):
+        self.confirm_new_password = value
     
     def borrar_mensajes_de_estado(self):
         self.error_de_registro = ""
@@ -254,20 +315,46 @@ class State(rx.State):
             self.descripcion = self.descripcion[:1000]
         self.descripcion_len = len(self.descripcion)
 
-    def set_documento(self, val):
-        # Valida y guarda nombre/valor del documento enviado desde el input file
-        # Valores posibles: dict con 'name' y 'content', o string (ruta/data URL)
-        self.documento = val
-        try:
-            if isinstance(val, dict) and "name" in val:
-                self.documento_nombre = val.get("name", "")
-            elif isinstance(val, str):
-                # puede ser data URL o ruta; mostrar solo la parte final
-                self.documento_nombre = os.path.basename(val)
-            else:
-                self.documento_nombre = ""
-        except Exception:
+    def set_tipo_solicitud(self, val: str):
+        self.tipo_solicitud = val or ""
+
+    def set_asunto(self, val: str):
+        self.asunto = val or ""
+
+    def set_ubicacion(self, val: str):
+        self.ubicacion = val or ""
+
+    def set_acepta_politica_solicitud(self, checked: bool):
+        self.acepta_politica_solicitud = bool(checked)
+
+    def set_documento(self, documento: Any):
+        """Actualiza el adjunto cuando el ciudadano selecciona un archivo."""
+        if isinstance(documento, dict):
+            name = documento.get("name") or documento.get("filename") or "adjunto"
+            self.documento_nombre = name
+            self.documento = documento
+        elif isinstance(documento, str):
+            self.documento_nombre = os.path.basename(documento)
+            self.documento = documento
+        else:
             self.documento_nombre = ""
+            self.documento = documento
+
+    def set_editar_solicitud_id(self, id: int):
+        self.editar_solicitud_id = id
+
+    def set_eliminar_solicitud_id(self, id: int):
+        self.eliminar_solicitud_id = id
+
+    def confirmar_editar_solicitud(self):
+        if self.editar_solicitud_id:
+            self.editar_solicitud(self.editar_solicitud_id)
+            self.editar_solicitud_id = 0
+
+    def confirmar_eliminar_solicitud(self):
+        if self.eliminar_solicitud_id:
+            self.eliminar_solicitud(self.eliminar_solicitud_id)
+            self.eliminar_solicitud_id = 0
 
     def _solicitud_a_dict(self, solicitud: Solicitud) -> Dict[str, Any]:
         return {
@@ -578,8 +665,19 @@ class State(rx.State):
             self.solicitud_mensaje = f"Error cargando solicitud: {e}"
 
     def eliminar_solicitud(self, solicitud_id: int):
-        self.solicitudes = [s for s in self.solicitudes if s["id"] != solicitud_id]
-        self.solicitud_mensaje = "Solicitud eliminada correctamente."
+        try:
+            with rx.session() as session:
+                solicitud_obj = session.get(Solicitud, solicitud_id)
+                if solicitud_obj:
+                    session.delete(solicitud_obj)
+                    session.commit()
+                    self.solicitud_mensaje = "Solicitud eliminada correctamente."
+                    self.cargar_solicitudes()
+                else:
+                    self.solicitud_mensaje = "Solicitud no encontrada."
+        except Exception as e:
+            self.solicitud_mensaje = f"Error eliminando solicitud: {e}"
+
 
     """The app state."""
 
@@ -1163,19 +1261,59 @@ def dashboard() -> rx.Component:
         rx.container(
             navbar(),
             rx.center(
-                rx.card(
-                    rx.vstack(
-                        rx.heading("Panel de Ciudadano", size="8", color="black"),
-                        rx.text("¡Bienvenido! Aquí podrás gestionar tus Peticiones, Quejas, Reclamos y Sugerencias.", color="gray.600"),
-                        rx.text("Funcionalidad completa próximamente en próximos sprints.", color="gray.500"),
-                        rx.button("Cerrar Sesión", on_click=State.logout, color_scheme="red", width="100%"),
-                        spacing="4",
-                        align_items="center"
+                rx.vstack(
+                    rx.heading("Panel de Ciudadano", size="8", color="black"),
+                    rx.text("¡Bienvenido! Aquí podrás gestionar tus Peticiones, Quejas, Reclamos y Sugerencias.", color="gray.600"),
+                    rx.box(
+                        rx.vstack(
+                            rx.heading("Mis Solicitudes", size="6", color="black"),
+                            rx.cond(
+                                State.solicitudes,
+                                rx.vstack(
+                                    rx.foreach(
+                                        State.solicitudes,
+                                        lambda solicitud: rx.box(
+                                            rx.vstack(
+                                                rx.heading(f"Radicado: {solicitud['radicado']} - {solicitud['tipo_solicitud']}", size="6", color="black"),
+                                                rx.text(f"Asunto: {solicitud['asunto']}", color="gray.700"),
+                                                rx.text(f"Descripción: {solicitud['descripcion']}", color="gray.700"),
+                                                rx.text(f"Estado: {solicitud['estado']}", color="gray.600"),
+                                                rx.text(f"Fecha: {solicitud['fecha']}", color="gray.600"),
+                                                rx.cond(
+                                                    solicitud["documento"],
+                                                    rx.hstack(
+                                                        rx.text("Documento: ", color="gray.600"),
+                                                        rx.link(
+                                                            solicitud["documento_basename"],
+                                                            href=f"/assets/uploads/{solicitud['documento_basename']}",
+                                                            color="blue.600",
+                                                            target="_blank"
+                                                        )
+                                                    ),
+                                                    rx.text("Documento: No adjunto", color="gray.600")
+                                                ),
+                                                spacing="2",
+                                                align_items="start"
+                                            ),
+                                            p="4",
+                                            border="1px solid #e2e8f0",
+                                            border_radius="lg",
+                                            bg="white",
+                                            _dark={"bg": "gray.800", "borderColor": "gray.700"},
+                                            width="100%"
+                                        )
+                                    ),
+                                    spacing="4"
+                                ),
+                                rx.text("No tienes solicitudes registradas aún.", color="gray.600", font_size="md")
+                            ),
+                            spacing="4"
+                        ),
+                        width="100%"
                     ),
-                    max_width="640px",
-                    p="10",
-                    box_shadow="2xl",
-                    border_radius="2xl"
+                    rx.button("Cerrar Sesión", on_click=State.logout, color_scheme="red", width="100%"),
+                    spacing="6",
+                    align_items="stretch"
                 ),
                 min_height="84vh"
             )
@@ -1207,6 +1345,55 @@ def funcionario_dashboard() -> rx.Component:
                     rx.heading("Panel de Funcionario", size="8", color="black"),
                     rx.text("Bienvenido, funcionario. Esta es tu página principal donde puedes revisar todas las peticiones.", color="gray.600"),
                     rx.text("Usa el menú superior para navegar: 'Nueva Solicitud' para crear peticiones, 'Registrar Funcionario' para añadir nuevos funcionarios.", color="gray.500"),
+                    rx.hstack(
+                        rx.box(
+                            rx.vstack(
+                                rx.text("Total de solicitudes", font_weight="semibold", color="gray.600"),
+                                rx.heading(State.numero_solicitudes, size="4", color="black")
+                            ),
+                            p="5",
+                            border="1px solid #e2e8f0",
+                            border_radius="xl",
+                            bg="#f8fbff",
+                            min_width="180px"
+                        ),
+                        rx.box(
+                            rx.vstack(
+                                rx.text("Radicadas", font_weight="semibold", color="gray.600"),
+                                rx.heading(State.numero_solicitudes_radicadas, size="4", color="black")
+                            ),
+                            p="5",
+                            border="1px solid #e2e8f0",
+                            border_radius="xl",
+                            bg="#fff7ed",
+                            min_width="180px"
+                        ),
+                        rx.box(
+                            rx.vstack(
+                                rx.text("Actualizadas", font_weight="semibold", color="gray.600"),
+                                rx.heading(State.numero_solicitudes_actualizadas, size="4", color="black")
+                            ),
+                            p="5",
+                            border="1px solid #e2e8f0",
+                            border_radius="xl",
+                            bg="#f0fdf4",
+                            min_width="180px"
+                        ),
+                        rx.box(
+                            rx.vstack(
+                                rx.text("Cerradas", font_weight="semibold", color="gray.600"),
+                                rx.heading(State.numero_solicitudes_cerradas, size="4", color="black")
+                            ),
+                            p="5",
+                            border="1px solid #e2e8f0",
+                            border_radius="xl",
+                            bg="#eef2ff",
+                            min_width="180px"
+                        ),
+                        spacing="4",
+                        width="100%",
+                        flex_wrap="wrap"
+                    ),
                     rx.box(
                         rx.vstack(
                             rx.cond(
@@ -1237,7 +1424,7 @@ def funcionario_dashboard() -> rx.Component:
                                                         rx.text("Documento: ", color="gray.600"),
                                                         rx.link(
                                                             solicitud["documento_basename"],
-                                                            href=f"/uploads/{solicitud['documento_basename']}",
+                                                            href=f"/assets/uploads/{solicitud['documento_basename']}",
                                                             color="blue.600",
                                                             target="_blank"
                                                         )
@@ -1371,6 +1558,19 @@ def solicitudes_page() -> rx.Component:
                                                     ),
                                                     rx.text(f"Estado: {solicitud['estado']}"),
                                                     rx.text(f"Fecha: {solicitud['fecha']}"),
+                                                    rx.cond(
+                                                        solicitud["documento"],
+                                                        rx.hstack(
+                                                            rx.text("Documento: ", color="gray.600"),
+                                                            rx.link(
+                                                                solicitud["documento_basename"],
+                                                                href=f"/assets/uploads/{solicitud['documento_basename']}",
+                                                                color="blue.600",
+                                                                target="_blank"
+                                                            )
+                                                        ),
+                                                        rx.text("Documento: No adjunto", color="gray.600")
+                                                    ),
                                                 ),
                                                 p="4",
                                                 border="1px solid #e2e8f0",
