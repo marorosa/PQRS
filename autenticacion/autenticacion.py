@@ -1273,11 +1273,21 @@ def login_page() -> rx.Component:
                         on_change=State.set_correo,
                         width="100%",
                     ),
-                    rx.input(
-                        placeholder="Contraseña", 
-                        type_="password", 
-                        on_change=State.set_contraseña,
+                    rx.hstack(
+                        rx.input(
+                            placeholder="Contraseña", 
+                            type_=rx.cond(State.show_password, "text", "password"),
+                            on_change=State.set_contraseña,
+                            width="100%",
+                        ),
+                        rx.button(
+                            rx.cond(State.show_password, rx.icon("eye_off"), rx.icon("eye")),
+                            on_click=State.toggle_show_password,
+                            variant="ghost",
+                            size="2"
+                        ),
                         width="100%",
+                        spacing="2"
                     ),
                     # Mensaje de éxito/error dinámico
                     rx.cond(
@@ -1491,66 +1501,129 @@ def funcionario_dashboard() -> rx.Component:
                         width="100%",
                         flex_wrap="wrap"
                     ),
+                    # Barra de búsqueda y filtros
+                    rx.box(
+                        rx.vstack(
+                            rx.heading("Buscar y Filtrar Solicitudes", size="5", color="black", margin_bottom="1em"),
+                            rx.input(
+                                placeholder="Buscar por radicado, asunto o creador...",
+                                value=State.query_solicitud,
+                                on_change=State.set_query_solicitud,
+                                width="100%",
+                                border="1px solid #cbd5e1",
+                                padding="12px",
+                                border_radius="md"
+                            ),
+                            rx.hstack(
+                                rx.vstack(
+                                    rx.text("Filtrar por Estado", font_weight="semibold", color="gray.700"),
+                                    rx.select(
+                                        ["Todas", "Radicada", "Actualizada", "Cerrada"],
+                                        value=State.filter_estado_solicitud,
+                                        on_change=State.set_filter_estado_solicitud,
+                                        width="100%"
+                                    ),
+                                    width="100%"
+                                ),
+                                rx.vstack(
+                                    rx.text("Filtrar por Tipo", font_weight="semibold", color="gray.700"),
+                                    rx.select(
+                                        ["Todas", "Petición", "Queja", "Reclamo", "Sugerencia"],
+                                        value=State.filter_tipo_solicitud,
+                                        on_change=State.set_filter_tipo_solicitud,
+                                        width="100%"
+                                    ),
+                                    width="100%"
+                                ),
+                                width="100%",
+                                spacing="4"
+                            ),
+                            spacing="4",
+                            width="100%"
+                        ),
+                        p="5",
+                        border="1px solid #e2e8f0",
+                        border_radius="lg",
+                        bg="#f9fafb",
+                        width="100%",
+                        margin_bottom="2em"
+                    ),
                     rx.box(
                         rx.vstack(
                             rx.cond(
                                 State.solicitudes,
                                 rx.vstack(
                                     rx.foreach(
-                                        State.solicitudes,
+                                        State.solicitudes_filtradas,
                                         lambda solicitud: rx.box(
                                             rx.vstack(
-                                                rx.heading(f"Radicado: {solicitud['radicado']} - {solicitud['tipo_solicitud']}", size="6", color="black"),
-                                                rx.text(f"Asunto: {solicitud['asunto']}", color="gray.700"),
-                                                rx.text(f"Descripción: {solicitud['descripcion']}", color="gray.700"),
-                                                rx.text(f"Creado por: {solicitud.get('creado_por', 'Desconocido')}", color="gray.600"),
-                                                rx.text(
-                                                    "Ubicación: ",
-                                                    rx.cond(
-                                                        solicitud["ubicacion"],
-                                                        solicitud["ubicacion"],
-                                                        "No especificada"
+                                                rx.hstack(
+                                                    rx.vstack(
+                                                        rx.heading(f"Radicado: {solicitud['radicado']}", size="5", color="#1e40af"),
+                                                        rx.text(f"Tipo: {solicitud['tipo_solicitud']}", font_weight="semibold", color="gray.700"),
+                                                        spacing="1"
                                                     ),
-                                                    color="gray.600"
-                                                ),
-                                                rx.text(
-                                                    "Área responsable: ",
-                                                    rx.cond(
-                                                        solicitud["area_responsable"],
-                                                        solicitud["area_responsable"],
-                                                        "No especificada"
+                                                    rx.spacer(),
+                                                    rx.badge(
+                                                        solicitud['estado'],
+                                                        color_scheme=rx.cond(
+                                                            solicitud['estado'] == 'Radicada', 
+                                                            "orange",
+                                                            rx.cond(solicitud['estado'] == 'Actualizada', "blue", "green")
+                                                        )
                                                     ),
-                                                    color="gray.600"
+                                                    width="100%",
+                                                    align_items="flex_start",
+                                                    spacing="4"
                                                 ),
-                                                rx.text(f"Estado: {solicitud['estado']}", color="gray.600"),
-                                                rx.text(f"Fecha: {solicitud['fecha']}", color="gray.600"),
+                                                rx.divider(),
+                                                rx.vstack(
+                                                    rx.text(f"Asunto: {solicitud['asunto']}", font_weight="semibold", color="black"),
+                                                    rx.text(f"Descripción: {solicitud['descripcion']}", color="gray.700"),
+                                                    rx.text(f"Creado por: {solicitud.get('creado_por', 'Desconocido')}", color="gray.600", font_size="sm"),
+                                                    rx.text(f"Fecha: {solicitud['fecha']}", color="gray.600", font_size="sm"),
+                                                    spacing="2"
+                                                ),
+                                                rx.cond(
+                                                    solicitud.get("ubicacion") != None,
+                                                    rx.text(f"Ubicación: {solicitud['ubicacion']}", color="gray.600", font_size="sm"),
+                                                    rx.text("")
+                                                ),
+                                                rx.cond(
+                                                    solicitud.get("area_responsable") != None,
+                                                    rx.text(f"Área: {solicitud['area_responsable']}", color="gray.600", font_size="sm"),
+                                                    rx.text("")
+                                                ),
                                                 rx.cond(
                                                     solicitud["documento"],
                                                     rx.hstack(
-                                                        rx.text("Documento: ", color="gray.600"),
+                                                        rx.icon("paperclip", size=16),
                                                         rx.link(
                                                             solicitud["documento_basename"],
                                                             href=f"/assets/uploads/{solicitud['documento_basename']}",
                                                             color="blue.600",
+                                                            font_weight="bold",
                                                             target="_blank"
-                                                        )
+                                                        ),
+                                                        rx.text("(Descargar)", color="blue.500", font_size="sm"),
                                                     ),
-                                                    rx.text("Documento: No adjunto", color="gray.600")
+                                                    rx.text("Sin documentos adjuntos", color="gray.500", font_size="sm")
                                                 ),
-                                                spacing="2",
+                                                spacing="3",
                                                 align_items="start"
                                             ),
-                                            p="4",
+                                            p="5",
                                             border="1px solid #e2e8f0",
                                             border_radius="lg",
                                             bg="white",
                                             _dark={"bg": "gray.800", "borderColor": "gray.700"},
-                                            width="100%"
+                                            width="100%",
+                                            _hover={"box_shadow": "md", "border_color": "#3b82f6"}
                                         )
                                     ),
                                     spacing="4"
                                 ),
-                                rx.text("No hay solicitudes registradas aún.", color="gray.600", font_size="md")
+                                rx.text("No hay solicitudes que coincidan con los filtros.", color="gray.600", font_size="md", text_align="center", padding="4em")
                             ),
                             spacing="4"
                         ),
