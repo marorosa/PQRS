@@ -151,6 +151,7 @@ class State(rx.State):
     descripcion_len: int = 0
     solicitudes: List[Dict] = []
     editar_solicitud_id: int = 0
+    eliminar_solicitud_id: int = 0
     solicitud_mensaje: str = ""
     
     error_de_registro: str = ""
@@ -258,20 +259,21 @@ class State(rx.State):
             self.descripcion = self.descripcion[:1000]
         self.descripcion_len = len(self.descripcion)
 
-    def set_documento(self, val):
-        # Valida y guarda nombre/valor del documento enviado desde el input file
-        # Valores posibles: dict con 'name' y 'content', o string (ruta/data URL)
-        self.documento = val
-        try:
-            if isinstance(val, dict) and "name" in val:
-                self.documento_nombre = val.get("name", "")
-            elif isinstance(val, str):
-                # puede ser data URL o ruta; mostrar solo la parte final
-                self.documento_nombre = os.path.basename(val)
-            else:
-                self.documento_nombre = ""
-        except Exception:
-            self.documento_nombre = ""
+    def set_editar_solicitud_id(self, id: int):
+        self.editar_solicitud_id = id
+
+    def set_eliminar_solicitud_id(self, id: int):
+        self.eliminar_solicitud_id = id
+
+    def confirmar_editar_solicitud(self):
+        if self.editar_solicitud_id:
+            self.editar_solicitud(self.editar_solicitud_id)
+            self.editar_solicitud_id = 0
+
+    def confirmar_eliminar_solicitud(self):
+        if self.eliminar_solicitud_id:
+            self.eliminar_solicitud(self.eliminar_solicitud_id)
+            self.eliminar_solicitud_id = 0
 
     def _solicitud_a_dict(self, solicitud: Solicitud) -> Dict[str, Any]:
         return {
@@ -652,8 +654,19 @@ class State(rx.State):
             self.solicitud_mensaje = f"Error cargando solicitud: {e}"
 
     def eliminar_solicitud(self, solicitud_id: int):
-        self.solicitudes = [s for s in self.solicitudes if s["id"] != solicitud_id]
-        self.solicitud_mensaje = "Solicitud eliminada correctamente."
+        try:
+            with rx.session() as session:
+                solicitud_obj = session.get(Solicitud, solicitud_id)
+                if solicitud_obj:
+                    session.delete(solicitud_obj)
+                    session.commit()
+                    self.solicitud_mensaje = "Solicitud eliminada correctamente."
+                    self.cargar_solicitudes()
+                else:
+                    self.solicitud_mensaje = "Solicitud no encontrada."
+        except Exception as e:
+            self.solicitud_mensaje = f"Error eliminando solicitud: {e}"
+
 
     """The app state."""
 
@@ -1260,19 +1273,59 @@ def dashboard() -> rx.Component:
         rx.container(
             navbar(),
             rx.center(
-                rx.card(
-                    rx.vstack(
-                        rx.heading("Panel de Ciudadano", size="8", color="black"),
-                        rx.text("¡Bienvenido! Aquí podrás gestionar tus Peticiones, Quejas, Reclamos y Sugerencias.", color="gray.600"),
-                        rx.text("Funcionalidad completa próximamente en próximos sprints.", color="gray.500"),
-                        rx.button("Cerrar Sesión", on_click=State.logout, color_scheme="red", width="100%"),
-                        spacing="4",
-                        align_items="center"
+                rx.vstack(
+                    rx.heading("Panel de Ciudadano", size="8", color="black"),
+                    rx.text("¡Bienvenido! Aquí podrás gestionar tus Peticiones, Quejas, Reclamos y Sugerencias.", color="gray.600"),
+                    rx.box(
+                        rx.vstack(
+                            rx.heading("Mis Solicitudes", size="6", color="black"),
+                            rx.cond(
+                                State.solicitudes,
+                                rx.vstack(
+                                    rx.foreach(
+                                        State.solicitudes,
+                                        lambda solicitud: rx.box(
+                                            rx.vstack(
+                                                rx.heading(f"Radicado: {solicitud['radicado']} - {solicitud['tipo_solicitud']}", size="6", color="black"),
+                                                rx.text(f"Asunto: {solicitud['asunto']}", color="gray.700"),
+                                                rx.text(f"Descripción: {solicitud['descripcion']}", color="gray.700"),
+                                                rx.text(f"Estado: {solicitud['estado']}", color="gray.600"),
+                                                rx.text(f"Fecha: {solicitud['fecha']}", color="gray.600"),
+                                                rx.cond(
+                                                    solicitud["documento"],
+                                                    rx.hstack(
+                                                        rx.text("Documento: ", color="gray.600"),
+                                                        rx.link(
+                                                            solicitud["documento_basename"],
+                                                            href=f"/uploads/{solicitud['documento_basename']}",
+                                                            color="blue.600",
+                                                            target="_blank"
+                                                        )
+                                                    ),
+                                                    rx.text("Documento: No adjunto", color="gray.600")
+                                                ),
+                                                spacing="2",
+                                                align_items="start"
+                                            ),
+                                            p="4",
+                                            border="1px solid #e2e8f0",
+                                            border_radius="lg",
+                                            bg="white",
+                                            _dark={"bg": "gray.800", "borderColor": "gray.700"},
+                                            width="100%"
+                                        )
+                                    ),
+                                    spacing="4"
+                                ),
+                                rx.text("No tienes solicitudes registradas aún.", color="gray.600", font_size="md")
+                            ),
+                            spacing="4"
+                        ),
+                        width="100%"
                     ),
-                    max_width="640px",
-                    p="10",
-                    box_shadow="2xl",
-                    border_radius="2xl"
+                    rx.button("Cerrar Sesión", on_click=State.logout, color_scheme="red", width="100%"),
+                    spacing="6",
+                    align_items="stretch"
                 ),
                 min_height="84vh"
             )
