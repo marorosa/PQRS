@@ -7,6 +7,7 @@ import os
 sys.path.append(os.path.dirname(__file__))
 
 from sqlmodel import create_engine, inspect
+from sqlalchemy import text
 from autenticacion.usuario_model import Usuario, Solicitud
 
 # Configurar la base de datos
@@ -45,12 +46,12 @@ def verificar_tablas():
 
     # Mostrar datos de Usuario
     with engine.connect() as conn:
-        result = conn.execute("SELECT COUNT(*) FROM usuario")
+        result = conn.execute(text("SELECT COUNT(*) FROM usuario"))
         count = result.fetchone()[0]
         print(f"Usuarios registrados: {count}")
 
         if count > 0:
-            result = conn.execute("SELECT id, nombre, correo, tipo_usuario FROM usuario LIMIT 5")
+            result = conn.execute(text("SELECT id, nombres, email, rol FROM usuario LIMIT 5"))
             rows = result.fetchall()
             print("Primeros usuarios:")
             for row in rows:
@@ -60,12 +61,12 @@ def verificar_tablas():
 
     # Mostrar datos de Solicitud
     with engine.connect() as conn:
-        result = conn.execute("SELECT COUNT(*) FROM solicitud")
+        result = conn.execute(text("SELECT COUNT(*) FROM solicitud"))
         count = result.fetchone()[0]
         print(f"Solicitudes registradas: {count}")
 
         if count > 0:
-            result = conn.execute("SELECT id, radicado, tipo_solicitud, asunto, estado, fecha FROM solicitud LIMIT 5")
+            result = conn.execute(text("SELECT id, radicado, tipo_solicitud, asunto, estado, fecha FROM solicitud LIMIT 5"))
             rows = result.fetchall()
             print("Primeras solicitudes:")
             for row in rows:
